@@ -121,7 +121,6 @@ Turn drafts off or on with the **Toggle /dev/null drafts** action, or `bin/devnu
 ```
   1 Following   2 Latest   3 Trending   4 Notifications         @you
 ────────────────────────────────────────────────────────────────────────
-  ↑ 2 new posts · R to load
 ▌ Julien Bianchi @jubianchi · 37m                              87c1792
 ▌ this ends another day of trying to contribute here and there… thanks
 ▌ /dev/null for the fun!
@@ -135,11 +134,16 @@ Turn drafts off or on with the **Toggle /dev/null drafts** action, or `bin/devnu
 | `o` | open the post on dev-null.sh |
 | `r` | reply, in the composer |
 | `s` | star or unstar |
-| `R` | refresh |
+| `g` | back to the newest post |
+| `R` | refresh now |
 | `q` | close |
 
-New posts are counted every minute. **Opening Notifications marks them read on /dev/null**, as
-the site does, so they only load when you open that tab. Meanwhile a small background loop
+The feed refreshes itself every 30 seconds. New posts slot in at the top, marked `●` until you
+have been on them, and the post you are reading stays where it is on screen; while you are
+further down, a line says how many came in above (`g` jumps up). Star and reply counts update
+as well. Trending is ranked and reorders itself, so it refreshes only while you are at its top.
+**Opening Notifications marks them read on /dev/null**, as the site does, so they only load
+(and refresh) while that tab is open. Meanwhile a small background loop
 (started with herdr) checks your unread count once a minute, which marks nothing read, and
 herdr notifies you when it grows.
 

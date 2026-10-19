@@ -65,20 +65,112 @@ class FeedTest(Isolated):
         self.assertEqual(self.client.calls[-1][0], "notifications")
         self.assertEqual(self.feed.target()["id"], commit(99)["id"])
 
-    def test_counts_new_posts(self):
-        self.feed.check_new()
-        self.assertEqual(self.client.calls[-1][3], commit(0)["id"])
-        self.assertEqual(self.feed.new, 3)
-        self.feed.switch(2)  # trending is ranked: nothing to count
+    def test_trending_refreshes_only_at_its_top(self):
+        self.feed.switch(2)
+        self.feed.move(2)
         calls = len(self.client.calls)
-        self.feed.check_new()
+        self.feed.refresh()
         self.assertEqual(len(self.client.calls), calls)
+        self.feed.selected["trending"] = 0
+        self.feed.refresh()
+        self.assertEqual(len(self.client.calls), calls + 1)
 
     def test_star_toggles(self):
         self.feed.toggle_star()
         self.assertTrue(self.feed.current()["starred"])
         self.feed.toggle_star()
         self.assertEqual(self.client.calls[-1][2], False)
+
+
+class LiveClient(FakeClient):
+    """A log that grows: the first page always holds the newest 20 posts."""
+
+    def __init__(self):
+        super().__init__()
+        self.newest = 19
+
+    def post(self, count=1):
+        self.newest += count
+
+    def log(self, name, cursor=None, since=None):
+        self.calls.append(("log", name, cursor, since))
+        return {"data": [commit(n, stars_count=n % 3) for n in range(self.newest, self.newest - 20, -1)],
+                "meta": {"next_cursor": "older"}}
+
+
+class RefreshTest(Isolated):
+    def setUp(self):
+        super().setUp()
+        self.client = LiveClient()
+        self.feed = feed.Feed(self.client)
+        self.feed.load()
+
+    def ids(self):
+        return [item["id"] for item in self.feed.items["following"]]
+
+    def test_new_posts_slot_in_on_top(self):
+        self.client.post(2)
+        self.feed.refresh()
+        self.assertEqual(self.ids()[:3], [commit(21)["id"], commit(20)["id"], commit(19)["id"]])
+        self.assertEqual(len(self.ids()), 22)
+        self.assertEqual(self.feed.fresh, {commit(21)["id"], commit(20)["id"]})
+
+    def test_at_the_top_you_see_them(self):
+        self.client.post(2)
+        self.feed.refresh()
+        self.assertEqual((self.feed.selected["following"], self.feed.top["following"]), (0, 0))
+
+    def test_while_reading_your_post_stays_put(self):
+        self.feed.move(5)
+        self.feed.top["following"] = 3
+        reading = self.feed.current()["id"]
+        self.client.post(2)
+        self.feed.refresh()
+        self.assertEqual(self.feed.current()["id"], reading)
+        self.assertEqual((self.feed.selected["following"], self.feed.top["following"]), (7, 5))
+
+    def test_new_posts_out_of_sight_are_counted(self):
+        self.feed.move(5)
+        self.feed.top["following"] = 3
+        self.assertEqual(self.feed.new_above(), 0)
+        self.client.post(2)
+        self.feed.refresh()
+        self.assertEqual(self.feed.new_above(), 2)
+
+    def test_counts_are_updated_in_place(self):
+        self.feed.items["following"][0]["stars_count"] = 99
+        self.feed.refresh()
+        self.assertEqual(self.feed.items["following"][0]["stars_count"], commit(19, stars_count=19 % 3)["stars_count"])
+        self.assertEqual(len(self.ids()), 20)
+
+    def test_a_whole_page_of_new_posts_starts_over(self):
+        self.feed.move(4)
+        self.client.post(25)
+        self.feed.refresh()
+        self.assertEqual(len(self.ids()), 20)
+        self.assertEqual(self.ids()[0], commit(44)["id"])
+        self.assertEqual(self.feed.selected["following"], 0)
+
+    def test_seeing_a_post_clears_its_mark(self):
+        self.feed.move(3)
+        self.client.post(1)
+        self.feed.refresh()
+        self.feed.move(-4)
+        self.assertEqual(self.feed.fresh, set())
+
+
+class ScrollTest(unittest.TestCase):
+    def test_keeps_the_top_while_the_selected_post_fits(self):
+        blocks = [[("x", "body")] * 3] * 10  # 4 rows each with the gap
+        self.assertEqual(feed.scroll(blocks, 2, 1, 20), 1)
+
+    def test_moves_just_enough_to_show_the_selected_post(self):
+        blocks = [[("x", "body")] * 3] * 10
+        self.assertEqual(feed.scroll(blocks, 6, 0, 20), 2)
+
+    def test_never_below_the_selected_post(self):
+        blocks = [[("x", "body")] * 3] * 10
+        self.assertEqual(feed.scroll(blocks, 1, 5, 20), 1)
 
 
 class RenderTest(unittest.TestCase):

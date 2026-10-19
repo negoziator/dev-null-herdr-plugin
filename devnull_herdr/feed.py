@@ -1,8 +1,11 @@
 """The feed: /dev/null's Following, Latest and Trending logs, and your notifications, in a pane.
 
 Keys: 1 2 3 switch logs, 4 notifications · j/k or arrows move · o opens in the browser ·
-r replies · s stars · R refreshes · q closes. New posts are counted every minute.
-Opening notifications marks them read on /dev/null, as the site does, so they load only then.
+r replies · s stars · R refreshes · q closes.
+
+The feed refreshes by itself: new posts slot in at the top, marked until you've been on them,
+and the post you are reading stays where it is on screen. Opening notifications marks them
+read on /dev/null, as the site does, so they load only while that tab is open.
 """
 
 import curses
@@ -16,7 +19,7 @@ from .text import clean
 from .textbox import width
 
 TABS = [("following", "Following"), ("latest", "Latest"), ("trending", "Trending"), ("notifications", "Notifications")]
-CHECK_EVERY = 60
+REFRESH_EVERY = 30
 MAX_BODY_ROWS = 8
 VERBS = {
     "replied": "replied to you", "mentioned": "mentioned you", "quoted": "quoted you", "starred": "starred",
@@ -142,9 +145,10 @@ class Feed:
         self.cursors = {name: None for name, _ in TABS}
         self.loaded = set()
         self.selected = {name: 0 for name, _ in TABS}
-        self.new = 0
+        self.top = {name: 0 for name, _ in TABS}  # the first post on screen
+        self.fresh = set()  # ids of posts that came in by themselves, not seen yet
         self.note = ""
-        self.checked = time.monotonic()
+        self.refreshed = time.monotonic()
 
     @property
     def name(self):
@@ -165,9 +169,9 @@ class Feed:
         self.items[name] = self.items[name] + data if more else data
         self.cursors[name] = meta.get("next_cursor")
         if not more:
-            self.selected[name] = 0
-            self.new = 0
+            self.selected[name] = self.top[name] = 0
         self.loaded.add(name)
+        self.refreshed = time.monotonic()
 
     def switch(self, tab):
         self.tab = tab
@@ -180,17 +184,49 @@ class Feed:
             return
         index = min(max(self.selected[self.name] + step, 0), len(items) - 1)
         self.selected[self.name] = index
+        self.fresh.discard(items[index].get("id"))
         if index >= len(items) - 3 and self.cursors[self.name]:
             self.load(more=True)
 
-    def check_new(self):
-        """Counts posts newer than the top one, without loading them."""
-        self.checked = time.monotonic()
+    def refresh(self):
+        """Brings the tab up to date without moving what you are reading.
+
+        New posts go on top, and the selection and the screen move down with them, so the post
+        you are on stays put. Counts of posts already shown are updated. Trending is ranked and
+        so reorders: it refreshes only while you are at its top.
+        """
+        self.refreshed = time.monotonic()
         name = self.name
-        if name in ("trending", "notifications") or not self.items[name]:
+        if name not in self.loaded:
             return
-        answer = self.client.log(name, since=self.items[name][0].get("id"))
-        self.new = number(answer.get("new_commits_count"))
+        if name in ("trending", "notifications"):
+            if self.selected[name] == 0:
+                self.load()
+            return
+        answer = self.client.log(name)
+        latest = [item for item in answer.get("data") or [] if isinstance(item, dict) and item.get("id")]
+        shown = {item.get("id"): item for item in self.items[name]}
+        new = [item for item in latest if item["id"] not in shown]
+        for item in latest:
+            if item["id"] in shown:
+                shown[item["id"]].update(item)
+        if not new:
+            return
+        if len(new) == len(latest):
+            # More new posts than a page: start from the top again.
+            meta = answer.get("meta") if isinstance(answer.get("meta"), dict) else {}
+            self.items[name], self.cursors[name] = latest, meta.get("next_cursor")
+            self.selected[name] = self.top[name] = 0
+        else:
+            self.items[name] = new + self.items[name]
+            if self.selected[name] or self.top[name]:
+                self.selected[name] += len(new)
+                self.top[name] += len(new)
+        self.fresh.update(item["id"] for item in new)
+
+    def new_above(self):
+        """How many posts that came in by themselves are above the screen, so out of sight."""
+        return sum(1 for item in self.items[self.name][: self.top[self.name]] if item.get("id") in self.fresh)
 
     def toggle_star(self):
         commit = self.current()
@@ -272,8 +308,8 @@ def _loop(screen, feed):
         except curses.error:
             key = None  # a second passed: time to count new posts, maybe
         if key is None:
-            if api.account() and time.monotonic() - feed.checked >= CHECK_EVERY:
-                _safely(feed, feed.check_new)
+            if api.account() and time.monotonic() - feed.refreshed >= REFRESH_EVERY:
+                _safely(feed, feed.refresh)
             continue
         if key == "q":
             return 0
@@ -302,7 +338,7 @@ def _loop(screen, feed):
         elif key == curses.KEY_PPAGE:
             _safely(feed, lambda: feed.move(-5))
         elif key == "g":
-            feed.selected[feed.name] = 0
+            feed.selected[feed.name] = feed.top[feed.name] = 0
         elif key == "R":
             _safely(feed, feed.load)
         elif key == "s":
@@ -362,21 +398,17 @@ def _draw(screen, feed, styles):
         _footer(screen, feed, rows, cols, "l sign in · q close")
         screen.refresh()
         return
-    if feed.new:
-        _put(screen, top, 2, f"↑ {feed.new} new post{'s' if feed.new != 1 else ''} · R to load", styles["accent"])
-        top += 1
-
     width = max(cols - 4, 10)
     items = feed.items[feed.name]
     render = notification_lines if feed.name == "notifications" else post_lines
     blocks = [render(item, width) for item in items]
     selected = feed.selected[feed.name]
-    # Scroll so that the whole selected post shows, from the top when it fits.
-    start, used = selected, sum(len(block) + 1 for block in blocks[selected : selected + 1])
-    while start > 0 and used + len(blocks[start - 1]) + 1 <= rows - top - 2:
-        start -= 1
-        used += len(blocks[start]) + 1
-    start = min(start, selected)
+    above = feed.new_above()
+    if above:
+        _put(screen, top, 2, f"↑ {above} new above · g to jump", styles["accent"])
+        top += 1
+    start = scroll(blocks, selected, feed.top[feed.name], rows - top - 2)
+    feed.top[feed.name] = start
     row = top
     for index in range(start, len(blocks)):
         if row >= rows - 2:
@@ -384,7 +416,7 @@ def _draw(screen, feed, styles):
         for text, style in blocks[index]:
             if row >= rows - 2:
                 break
-            marker = "▌" if index == selected else " "
+            marker = "▌" if index == selected else ("●" if items[index].get("id") in feed.fresh else " ")
             _put(screen, row, 0, marker, styles["accent"])
             _put(screen, row, 2, text, styles[style] | (curses.A_BOLD if index == selected and style == "body" else 0))
             row += 1
@@ -397,6 +429,15 @@ def _draw(screen, feed, styles):
         keys = "1-4 tabs · j/k move · o open · r reply · R refresh · q close"
     _footer(screen, feed, rows, cols, keys)
     screen.refresh()
+
+
+def scroll(blocks, selected, top, room):
+    """The first post on screen: the same as before when the selected post still fits below
+    it, else just enough further that the whole selected post shows."""
+    top = min(max(top, 0), selected)
+    while top < selected and sum(len(block) + 1 for block in blocks[top : selected + 1]) > room:
+        top += 1
+    return top
 
 
 def _footer(screen, feed, rows, cols, keys):
