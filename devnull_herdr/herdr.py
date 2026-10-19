@@ -42,9 +42,9 @@ def pane_cwd(pane_id):
     return cwd if isinstance(cwd, str) else None
 
 
-def open_pane(entrypoint):
-    """Opens one of the plugin's popups. Only one popup can be open at a time."""
-    result = _run("plugin", "pane", "open", "--plugin", PLUGIN_ID, "--entrypoint", entrypoint, "--focus")
+def open_pane(entrypoint, *options):
+    """Opens one of the plugin's panes. Only one popup can be open at a time."""
+    result = _run("plugin", "pane", "open", "--plugin", PLUGIN_ID, "--entrypoint", entrypoint, *options, "--focus")
     if result is None:
         return False, "herdr is not reachable."
     if result.returncode != 0:

@@ -19,9 +19,10 @@ class MessageTest(unittest.TestCase):
 
     def test_header(self):
         self.assertEqual(compose.header(None, [], None, False), "/dev/null · new post")
+        self.assertEqual(compose.header("01a1-uuid", [], None, False, "@nuno: hi"), "/dev/null · reply to @nuno: hi")
         self.assertEqual(
             compose.header("0be0130", ["a.png"], ("p", {}), True),
-            "/dev/null · draft post · reply to 0be0130 · 1 image · DRY RUN, nothing is sent",
+            "/dev/null · reply to 0be0130 (draft) · 1 image · DRY RUN, nothing is sent",
         )
 
 

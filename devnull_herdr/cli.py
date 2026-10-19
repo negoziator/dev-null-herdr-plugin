@@ -3,7 +3,7 @@ import json
 import os
 import sys
 
-from . import __version__, compose, drafts, herdr, paths, script
+from . import __version__, compose, drafts, feed, herdr, login, paths, script, watch
 
 
 def _post_options(parser):
@@ -20,6 +20,7 @@ def parser():
     edit = commands.add_parser("compose", help="write a post in a text box and post it")
     edit.add_argument("text", nargs="?", help="text to start from")
     edit.add_argument("--draft", action="store_true", help="start from the newest draft post")
+    edit.add_argument("--pending-reply", action="store_true", help="reply to the post picked in the feed")
     _post_options(edit)
 
     post = commands.add_parser("post", help="post without the text box")
@@ -29,7 +30,19 @@ def parser():
     commands.add_parser("hook", help="handle a herdr event (run by herdr)")
 
     open_ = commands.add_parser("open", help="open one of the plugin's popups in herdr")
-    open_.add_argument("entrypoint", choices=["compose", "review-draft"])
+    open_.add_argument("entrypoint", choices=["compose", "review-draft", "feed"])
+
+    commands.add_parser("feed", help="show the feed in this terminal")
+
+    sign_in = commands.add_parser("login", help="sign in to /dev/null as a device, for the feed")
+    sign_in.add_argument("--again", action="store_true", help="sign in again even when signed in")
+    sign_in.add_argument("--logout", action="store_true", help="forget the sign-in here")
+
+    handle = commands.add_parser("handle-url", help="take a devnull:// sign-in link (run by the browser)")
+    handle.add_argument("url")
+
+    watcher = commands.add_parser("watch", help="notify about new notifications (run by herdr)")
+    watcher.add_argument("--detach", action="store_true", help="start in the background and return")
 
     toggle = commands.add_parser("drafts", help="list draft posts, or turn drafting on or off")
     toggle.add_argument("state", nargs="?", choices=["on", "off", "toggle", "list"], default="list")
@@ -62,7 +75,8 @@ def _hook():
 
 
 def _open(args):
-    ok, error = herdr.open_pane(args.entrypoint)
+    options = ["--direction", "right"] if args.entrypoint == "feed" else []
+    ok, error = herdr.open_pane(args.entrypoint, *options)
     if not ok:
         print(error, file=sys.stderr)
         herdr.notify("/dev/null", error)
@@ -103,6 +117,14 @@ def main(argv=None):
         return _hook()
     if args.command == "open":
         return _open(args)
+    if args.command == "feed":
+        return feed.main(args)
+    if args.command == "login":
+        return login.main(args)
+    if args.command == "handle-url":
+        return login.handle_url(args.url)
+    if args.command == "watch":
+        return watch.detach() if args.detach else watch.loop()
     if args.command == "drafts":
         return _drafts(args)
     if args.command == "dry-run":

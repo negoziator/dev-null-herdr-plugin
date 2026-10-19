@@ -33,10 +33,11 @@ def problem(text):
     return None
 
 
-def header(reply, images, draft, dry_run):
-    parts = ["/dev/null", "draft post" if draft else "new post"]
+def header(reply, images, draft, dry_run, reply_label=None):
+    kind = "draft post" if draft else "new post"
     if reply:
-        parts.append(f"reply to {reply}")
+        kind = f"reply to {reply_label or reply}" + (" (draft)" if draft else "")
+    parts = ["/dev/null", kind]
     if images:
         parts.append(f"{len(images)} image{'s' if len(images) != 1 else ''}")
     if dry_run:
@@ -271,7 +272,7 @@ def _put(screen, row, column, text, attributes=0):
         pass
 
 
-def run(text="", reply=None, images=(), draft=None, dry_run=False, ask=None, ui=None):
+def run(text="", reply=None, images=(), draft=None, dry_run=False, ask=None, ui=None, reply_label=None):
     """Shows the box until the post is sent or given up. `draft` is (path, draft). Returns an exit code."""
     ask, ui = ask or input, ui or edit
 
@@ -284,7 +285,7 @@ def run(text="", reply=None, images=(), draft=None, dry_run=False, ask=None, ui=
 
     kept = " The draft is kept." if draft else ""
     while True:
-        action, text = ui(text, header(reply, images, draft, dry_run), draft is not None, rescue=rescue)
+        action, text = ui(text, header(reply, images, draft, dry_run, reply_label), draft is not None, rescue=rescue)
         if action == CANCEL:
             print("Nothing posted." + kept)
             return 1
@@ -333,6 +334,17 @@ def post(text, reply, images, draft, dry_run, ask=None):
 def main(args):
     reply, images, draft, text = args.reply, args.image or [], None, args.text or ""
     dry_run = args.dry_run or paths.config()["dry_run"]
+    reply_label = None
+    if getattr(args, "pending_reply", False) is True:
+        # Picked in the feed: what it replies to waits in the state directory, read once.
+        picked = paths.read_json(paths.state_dir() / "reply-to.json", {})
+        (paths.state_dir() / "reply-to.json").unlink(missing_ok=True)
+        if not isinstance(picked.get("id"), str):
+            print("Nothing to reply to: pick a post in the feed and press r.")
+            _wait()
+            return 1
+        reply = picked["id"]
+        reply_label = f"@{picked.get('username')}: {picked.get('excerpt') or ''}"[:60]
     try:
         if args.draft:
             path, data = drafts.newest()
@@ -347,7 +359,7 @@ def main(args):
             saved = paths.read_json(recovery_path(), {})
             text, reply = unsent, reply or saved.get("reply")
             images = images or [image for image in saved.get("images", []) if isinstance(image, str)]
-        code = run(text, reply, images, draft, dry_run)
+        code = run(text, reply, images, draft, dry_run, reply_label=reply_label)
         if unsent:
             # Shown again: posted, or closed on purpose. Either way it has served its turn.
             recovery_path().unlink(missing_ok=True)

@@ -15,23 +15,29 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _dir(env, xdg_env, xdg_default):
+PLUGIN_ID = "negoziator.dev-null"
+
+
+def _dir(env, xdg_env, xdg_default, herdr_dir):
+    """herdr's directory for the plugin; from a shell the same one when herdr made it, so that
+    a sign-in or a draft is the same in both; else an XDG one."""
     if os.environ.get(env):
         path = Path(os.environ[env])
     else:
         base = Path(os.environ.get(xdg_env) or Path.home() / xdg_default)
-        path = base / "dev-null-herdr"
+        herdr_path = base / herdr_dir / PLUGIN_ID
+        path = herdr_path if herdr_path.is_dir() else base / "dev-null-herdr"
     path.mkdir(parents=True, exist_ok=True)
     os.chmod(path, 0o700)
     return path
 
 
 def state_dir():
-    return _dir("HERDR_PLUGIN_STATE_DIR", "XDG_STATE_HOME", ".local/state")
+    return _dir("HERDR_PLUGIN_STATE_DIR", "XDG_STATE_HOME", ".local/state", "herdr/plugins")
 
 
 def config_dir():
-    return _dir("HERDR_PLUGIN_CONFIG_DIR", "XDG_CONFIG_HOME", ".config")
+    return _dir("HERDR_PLUGIN_CONFIG_DIR", "XDG_CONFIG_HOME", ".config", "herdr/plugins/config")
 
 
 def private_file(path, data, mode="w"):

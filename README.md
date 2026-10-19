@@ -8,6 +8,8 @@ Post to [/dev/null](https://dev-null.sh), the social network for developers, wit
   plugin writes a draft post about it, like *"Just shipped a popup composer in my-app 🚀"*, and
   tells you. You edit it into your own words and post it, or throw it away. **Nothing is ever
   posted without you.**
+- **Feed**: Following, Latest and Trending, and your notifications, in a pane next to your
+  agents. Open, reply and star from the keyboard. herdr tells you when someone replies.
 
 Posts are signed with an SSH key that is on your GitHub account, exactly as with
 `curl -fsSL https://dev-null.sh/commit | bash`. There is no login and no token.
@@ -44,6 +46,12 @@ key = "prefix+shift+m"
 type = "plugin_action"
 command = "negoziator.dev-null.review-draft"
 description = "review /dev/null draft"
+
+[[keys.command]]
+key = "prefix+f"
+type = "plugin_action"
+command = "negoziator.dev-null.feed"
+description = "/dev/null feed"
 ```
 
 Then run `herdr server reload-config`. You can also run the actions from herdr's command palette
@@ -106,6 +114,59 @@ to share, especially from a private repository: you see every draft before it go
 
 Turn drafts off or on with the **Toggle /dev/null drafts** action, or `bin/devnull drafts off`.
 
+## The feed
+
+**Open /dev/null feed** (`prefix+f` with the keybinding above) opens a pane to the right:
+
+```
+  1 Following   2 Latest   3 Trending   4 Notifications         @you
+────────────────────────────────────────────────────────────────────────
+  ↑ 2 new posts · R to load
+▌ Julien Bianchi @jubianchi · 37m                              87c1792
+▌ this ends another day of trying to contribute here and there… thanks
+▌ /dev/null for the fun!
+▌ ☆ 2   ↩ 0
+```
+
+| Key | |
+|---|---|
+| `1` `2` `3` `4`, Tab | Following, Latest, Trending, Notifications |
+| `j` `k`, arrows, Space, PgUp/PgDn | move; more posts load as you reach the end |
+| `o` | open the post on dev-null.sh |
+| `r` | reply, in the composer |
+| `s` | star or unstar |
+| `R` | refresh |
+| `q` | close |
+
+New posts are counted every minute. **Opening Notifications marks them read on /dev/null**, as
+the site does, so they only load when you open that tab. Meanwhile a small background loop
+(started with herdr) checks your unread count once a minute, which marks nothing read, and
+herdr notifies you when it grows.
+
+### Signing in
+
+Posting needs no sign-in, but the feed does: /dev/null only shows it to an approved device.
+The first time, the feed asks you to press `l` (or run `bin/devnull login`):
+
+1. The plugin makes its own ed25519 key, in its config directory, readable only by you. It is
+   used for nothing else, and it is not your GitHub key.
+2. Your browser opens /dev/null's approval page. Press **Approve**.
+3. /dev/null sends the browser to a `devnull://` link. On Linux, for the few minutes the sign-in
+   waits, the plugin is your desktop's handler for those links (`xdg-mime`); the handler that was
+   there before is put back afterwards, however the sign-in ends. If the browser asks whether to
+   open the link, say yes. If nothing happens, copy the link and paste it into the sign-in. On
+   macOS, pasting is the way.
+
+Sign the device out at any time on /dev/null under Settings → Devices, or forget it here with
+`bin/devnull login --logout`.
+
+A device key can do whatever your account can, deleting the account included. The plugin sends
+only the requests it needs (the feed, notifications, replies, stars, and redeeming the sign-in),
+and refuses any other before it is signed. The key itself has no passphrase, so that the feed can
+sign by itself: anything that can read it can act as you until you revoke the device. Keep
+`~/.config/herdr/plugins/config/negoziator.dev-null/` out of dotfile repositories and synced
+backups, and revoke the device on /dev/null if the key may have leaked.
+
 ## The posting script
 
 The plugin posts with /dev/null's own script, never piped from the network. It ships a reviewed
@@ -133,14 +194,18 @@ bin/devnull post 'It was DNS.'             # post straight away, no text box
 bin/devnull post --reply 0be0130 'Agreed!' --image shipped.png
 bin/devnull post --dry-run 'Hello world!'  # shows what would be sent, sends nothing
 bin/devnull drafts                         # lists drafts
+bin/devnull feed                           # the feed, in this terminal
+bin/devnull login                          # sign in for the feed
 ```
+
+From a shell it uses the same sign-in, drafts and settings as herdr does.
 
 ## Files
 
 | What | Where |
 |---|---|
-| Drafts, turn tracking, an updated posting script (all private to you, `0600`) | `$HERDR_PLUGIN_STATE_DIR` (`~/.local/state/dev-null-herdr` from a shell) |
-| Settings (`config.json`) | `$HERDR_PLUGIN_CONFIG_DIR` (`~/.config/dev-null-herdr` from a shell) |
+| Drafts, turn tracking, an updated posting script, the watcher's log (all private to you, `0600`) | `$HERDR_PLUGIN_STATE_DIR` |
+| Settings (`config.json`), the sign-in (`account.json`) and its key (`device_ed25519`) | `$HERDR_PLUGIN_CONFIG_DIR` |
 
 Logs: `herdr plugin log list --plugin negoziator.dev-null`.
 
@@ -156,8 +221,9 @@ again.
 
 ## Roadmap
 
-- A feed pane (following, latest, trending) and reply notifications. Both need /dev/null's device
-  sign-in, waiting on [nunomaduro/dev-null.sh#585](https://github.com/nunomaduro/dev-null.sh/pull/585).
+- Sign in with a device code instead of the `devnull://` handler, once
+  [nunomaduro/dev-null.sh#585](https://github.com/nunomaduro/dev-null.sh/pull/585) is deployed.
+- A sidebar badge with your unread count.
 
 ## Licence
 

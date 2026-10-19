@@ -20,9 +20,11 @@ class Isolated(unittest.TestCase):
         os.environ["HERDR_BIN_PATH"] = "/nonexistent/herdr"
         # Nor the network: fetch errors are swallowed, so a call is recorded and fails the test.
         self.network_calls = []
-        patcher = mock.patch("urllib.request.urlopen", side_effect=lambda *a, **k: self.network_calls.append(a) or 1 / 0)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        refuse = lambda *a, **k: self.network_calls.append(a) or 1 / 0  # noqa: E731
+        for target in ("urllib.request.urlopen", "devnull_herdr.api._OPENER.open"):
+            patcher = mock.patch(target, side_effect=refuse)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.addCleanup(lambda: self.assertEqual(self.network_calls, [], "a test reached the network"))
         # Nor wait for a keyboard: a prompt a test did not answer fails it at once.
         patcher = mock.patch("builtins.input", side_effect=AssertionError("unexpected prompt"))

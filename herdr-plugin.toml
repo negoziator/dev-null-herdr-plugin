@@ -45,3 +45,29 @@ command = ["python3", "bin/devnull", "drafts", "toggle"]
 [[events]]
 on = "pane.agent_status_changed"
 command = ["python3", "bin/devnull", "hook"]
+
+# The feed: Following, Latest, Trending and notifications, next to your agents.
+[[panes]]
+id = "feed"
+title = "/dev/null feed"
+placement = "split"
+command = ["python3", "bin/devnull", "feed"]
+
+# A reply to the post picked in the feed.
+[[panes]]
+id = "reply"
+title = "/dev/null reply"
+placement = "popup"
+width = 84
+height = 26
+command = ["python3", "bin/devnull", "compose", "--pending-reply"]
+
+[[actions]]
+id = "feed"
+title = "Open /dev/null feed"
+description = "Show your /dev/null feed in a pane. Signs you in the first time."
+command = ["python3", "bin/devnull", "open", "feed"]
+
+# Checks your unread count once a minute, in the background, and tells you when it grows.
+[[startup]]
+command = ["python3", "bin/devnull", "watch", "--detach"]
