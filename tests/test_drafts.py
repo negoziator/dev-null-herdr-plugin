@@ -34,7 +34,8 @@ class HookTest(Isolated):
         self.assertEqual(draft["subjects"], ["Add the composer", "Fix the hook"])
         self.assertIn("2 files changed", draft["shortstat"])
         self.assertEqual(len(self.notes), 1)
-        self.assertIn("project: 2 commits", self.notes[0][1])
+        self.assertEqual(self.notes[0][0], "Draft post ready")
+        self.assertIn("project", self.notes[0][1])
 
     def test_a_turn_without_commits_drafts_nothing(self):
         self.handle("working")
@@ -203,27 +204,47 @@ class OddInputTest(Isolated):
 
 
 class RenderTest(Isolated):
-    def test_render(self):
+    def test_reads_like_a_post(self):
         text = drafts.render(
-            {"name": "app", "subjects": ["A", "B"], "shortstat": "2 files changed", "url": "https://github.com/me/app"}
+            {"name": "app", "subjects": ["Fix the hook", "Add a popup composer"], "url": "https://github.com/me/app"}
         )
-        self.assertEqual(text, "Shipped in app:\n- A\n- B\n\n2 files changed\n\nhttps://github.com/me/app")
+        self.assertEqual(text, "Just shipped a popup composer in app 🚀\n\nPlus 1 more change.\n\nhttps://github.com/me/app")
+
+    def test_leads_with_the_latest_when_nothing_was_added(self):
+        text = drafts.render({"name": "api", "subjects": ["Tidy up", "fix(api): handle empty payloads"]})
+        self.assertEqual(text, "Just shipped in api: Handle empty payloads 🚀\n\nPlus 1 more change.")
+
+    def test_conventional_prefixes_are_dropped(self):
+        self.assertEqual(drafts.render({"name": "x", "subjects": ["feat!: add dark mode"]}), "Just shipped dark mode in x 🚀")
+
+    def test_acronyms_and_ordinary_colons_are_kept(self):
+        self.assertEqual(drafts.render({"name": "x", "subjects": ["Add API keys"]}), "Just shipped API keys in x 🚀")
+        self.assertEqual(drafts.render({"name": "x", "subjects": ["README: new badge"]}),
+                         "Just shipped in x: README: new badge 🚀")
+
+    def test_a_huge_subject_keeps_the_link(self):
+        text = drafts.render({"name": "x", "subjects": ["Add " + "y" * 5000], "url": "https://github.com/me/x"})
+        self.assertTrue(text.endswith("https://github.com/me/x"))
+        self.assertLessEqual(len(text), 4000)
+
+    def test_a_huge_name_keeps_the_link(self):
+        text = drafts.render({"name": "n" * 5000, "subjects": ["Add x"], "url": "https://github.com/me/x"})
+        self.assertTrue(text.endswith("https://github.com/me/x"))
+
+    def test_no_git_log_in_the_post(self):
+        text = drafts.render({"name": "x", "subjects": ["Add a", "b", "c"], "shortstat": "3 files changed"})
+        self.assertNotIn("files changed", text)
+        self.assertNotIn("- ", text)
+        self.assertIn("Plus 2 more changes.", text)
 
     def test_escape_sequences_never_reach_the_draft(self):
-        text = drafts.render({"name": "app\x1b[2K", "subjects": ["fix\x1b[8m my-token", "up\x1b[1A\x9b"]})
-        self.assertEqual(text, "Shipped in app[2K:\n- fix[8m my-token\n- up[1A")
+        text = drafts.render({"name": "app\x1b[2K", "subjects": ["fix\x1b[8m my-token"]})
         self.assertNotIn("\x1b", text)
+        self.assertIn("Fix[8m my-token", text)
 
     def test_invisible_reordering_characters_never_reach_the_draft(self):
-        text = drafts.render({"name": "app", "subjects": ["ship\u202egnp.exe\u200b", "pair 👨\u200d💻"]})
-        self.assertIn("- shipgnp.exe\n", text)
-        self.assertIn("👨\u200d💻", text)
-
-    def test_many_commits_show_the_latest(self):
-        text = drafts.render({"name": "app", "subjects": [f"c{i}" for i in range(20)]})
-        self.assertIn("…and 8 earlier commits", text)
-        self.assertIn("- c19", text)
-        self.assertNotIn("- c7\n", text)
+        text = drafts.render({"name": "app", "subjects": ["Ship pair 👨\u200d💻\u202e\u200b"]})
+        self.assertEqual(text, "Just shipped pair 👨\u200d💻 in app 🚀")
 
     def test_never_over_the_limit(self):
         self.assertLessEqual(len(drafts.render({"name": "app", "subjects": ["x" * 3000] * 3})), 4000)

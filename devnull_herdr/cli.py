@@ -6,38 +6,38 @@ import sys
 from . import __version__, compose, drafts, herdr, paths, script
 
 
-def _commit_options(parser):
-    parser.add_argument("--reply", metavar="HASH", help="reply to a commit (its hash or link)")
+def _post_options(parser):
+    parser.add_argument("--reply", metavar="HASH", help="reply to a post (its hash or link)")
     parser.add_argument("--image", action="append", metavar="PATH", help="attach an image, up to 3 times")
-    parser.add_argument("--dry-run", action="store_true", help="show what would be committed, send nothing")
+    parser.add_argument("--dry-run", action="store_true", help="show what would be posted, send nothing")
 
 
 def parser():
-    root = argparse.ArgumentParser(prog="devnull", description="Commit to /dev/null from herdr.")
+    root = argparse.ArgumentParser(prog="devnull", description="Post to /dev/null from herdr.")
     root.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     commands = root.add_subparsers(dest="command", required=True)
 
-    edit = commands.add_parser("compose", help="write a commit in your editor, review it, commit it")
+    edit = commands.add_parser("compose", help="write a post in a text box and post it")
     edit.add_argument("text", nargs="?", help="text to start from")
-    edit.add_argument("--draft", action="store_true", help="start from the newest draft")
-    _commit_options(edit)
+    edit.add_argument("--draft", action="store_true", help="start from the newest draft post")
+    _post_options(edit)
 
-    post = commands.add_parser("post", help="commit a message without the editor")
+    post = commands.add_parser("post", help="post without the text box")
     post.add_argument("text")
-    _commit_options(post)
+    _post_options(post)
 
     commands.add_parser("hook", help="handle a herdr event (run by herdr)")
 
     open_ = commands.add_parser("open", help="open one of the plugin's popups in herdr")
     open_.add_argument("entrypoint", choices=["compose", "review-draft"])
 
-    toggle = commands.add_parser("drafts", help="list drafts, or turn drafting on or off")
+    toggle = commands.add_parser("drafts", help="list draft posts, or turn drafting on or off")
     toggle.add_argument("state", nargs="?", choices=["on", "off", "toggle", "list"], default="list")
 
-    dry = commands.add_parser("dry-run", help="make the composer send nothing, to try it out")
+    dry = commands.add_parser("dry-run", help="make the composer post nothing, to try it out")
     dry.add_argument("state", nargs="?", choices=["on", "off"], help="omit to show the setting")
 
-    check = commands.add_parser("check-script", help="compare the commit script with the live one")
+    check = commands.add_parser("check-script", help="compare the posting script with the live one")
     check.add_argument("--reset", action="store_true", help="drop an accepted update, use the vendored copy")
     return root
 
@@ -48,7 +48,7 @@ def _post(args):
     if error:
         print(error, file=sys.stderr)
         return 1
-    return compose.commit(text, args.reply, args.image or [], None, args.dry_run)
+    return compose.post(text, args.reply, args.image or [], None, args.dry_run or paths.config()["dry_run"])
 
 
 def _hook():
@@ -75,12 +75,12 @@ def _drafts(args):
             draft = paths.read_json(path, {})
             if not isinstance(draft.get("subjects"), list):
                 continue
-            print(f"{draft.get('name')}: {len(draft.get('subjects', []))} commits ({path})")
+            print(f"{draft.get('name')}: about {len(draft.get('subjects', []))} commits ({path})")
         print(f"Drafting is {'on' if paths.config()['drafts'] else 'off'}.")
         return 0
     enabled = {"on": True, "off": False, "toggle": not paths.config()["drafts"]}[args.state]
     paths.save_config({"drafts": enabled})
-    status = f"Drafts are {'on' if enabled else 'off'}."
+    status = f"Draft posts are {'on' if enabled else 'off'}."
     print(status)
     herdr.notify("/dev/null", status)
     return 0
@@ -89,7 +89,7 @@ def _drafts(args):
 def _dry_run(args):
     if args.state:
         paths.save_config({"dry_run": args.state == "on"})
-    print(f"Dry run is {'on: the composer sends nothing' if paths.config()['dry_run'] else 'off'}.")
+    print(f"Dry run is {'on: nothing is posted' if paths.config()['dry_run'] else 'off'}.")
     return 0
 
 
@@ -111,6 +111,6 @@ def main(argv=None):
         if args.reset:
             script.reset()
         script.check_for_update()
-        print(f"Committing with {script.current()}")
+        print(f"Posting with {script.current()}")
         return 0
     return 2

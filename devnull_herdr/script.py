@@ -113,7 +113,7 @@ def check_for_update(ask=None, fetch=None, show=None, out=print):
     ask = ask or input
     remote = (fetch or fetch_remote)()
     if remote is None:
-        out("Could not check for a new version of the commit script, using the current one.")
+        out("Could not check for a new version of the posting script, using the current one.")
         return
     local = current().read_bytes()
     if sha256(local) == sha256(remote):
@@ -151,6 +151,6 @@ def commit(message, reply=None, images=()):
     try:
         result = subprocess.run(command(message, reply, images), stdout=subprocess.PIPE, text=True)
     except OSError as error:
-        return False, None, f"Could not run the commit script: {error}"
+        return False, None, f"Could not run the posting script: {error}"
     match = COMMITTED.search(result.stdout)
     return result.returncode == 0, match.group(1) if match else None, visible(result.stdout.strip())

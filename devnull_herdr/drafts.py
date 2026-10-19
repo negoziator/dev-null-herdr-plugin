@@ -1,11 +1,11 @@
-"""Drafts of what an agent shipped.
+"""Draft posts about what an agent shipped.
 
 When an agent pane starts working, the hook remembers the HEAD and branch of the repository
 the pane itself is in. When it is done, the commits made since then on that branch become a
 draft for that repository; a draft that is still waiting grows with the next turn's commits.
 A turn drafts nothing when it made no commit, when the branch changed, or when history was
 rewritten (a rebase, an amend): then "since then" no longer means "what the agent did".
-Drafts are never committed by the hook: you review them in the composer.
+Drafts are never posted by the hook: you review and edit them in the composer.
 """
 
 import hashlib
@@ -19,7 +19,6 @@ from . import herdr, paths
 from .text import clean
 
 LIMIT = 4000
-MAX_SUBJECTS = 12
 DONE = ("done", "idle")
 # A turn this old was not seen to end (the agent died, the pane closed): it is dropped.
 TURN_TTL = 12 * 3600
@@ -70,20 +69,46 @@ def web_url(repo):
     return f"https://{match.group(1)}" if match else None
 
 
+CONVENTIONAL = re.compile(
+    r"^(feat|fix|perf|refactor|docs|chore|test|tests|build|ci|style|revert)(\([^)]*\))?!?:\s*", re.IGNORECASE
+)
+ADDED = re.compile(r"^(add|adds|added|introduce|introduces|ship|ships)\s+", re.IGNORECASE)
+
+
+def _lead(subjects):
+    """The change a post leads with: the first that adds something, else the latest."""
+    count = len(subjects)
+    subjects = [CONVENTIONAL.sub("", subject).strip() for subject in subjects]
+    subjects = [subject for subject in subjects if subject] or ["some changes"]
+    return next((subject for subject in subjects if ADDED.match(subject)), subjects[-1]), count
+
+
+def _lower_first(text):
+    """"A popup" → "a popup", but "API keys" stays "API keys"."""
+    return text[:1].lower() + text[1:] if text[1:2].islower() or len(text) == 1 else text
+
+
 def render(draft):
-    """The commit text for a draft, always within /dev/null's 4000 characters."""
-    subjects = [clean(subject) for subject in draft["subjects"]]
-    shown = subjects[-MAX_SUBJECTS:]
-    lines = [f"Shipped in {clean(draft['name'])}:"]
-    if len(shown) < len(subjects):
-        lines.append(f"- …and {len(subjects) - len(shown)} earlier commits")
-    lines += [f"- {subject}" for subject in shown]
-    if draft.get("shortstat"):
-        lines += ["", clean(draft["shortstat"])]
+    """A draft post about what was shipped, within /dev/null's 4000 characters.
+
+    It reads like a post, not a git log: you edit it into your own words before posting.
+    """
+    if isinstance(draft.get("edited"), str):
+        return draft["edited"][:LIMIT]  # your own words, from a review the composer couldn't finish
+    name = clean(draft["name"])[:100]
+    lead, count = _lead([clean(subject) for subject in draft["subjects"]])
+    # A huge subject is cut, so the rest of the post (and the link) always fits.
+    lead = lead if len(lead) <= 500 else lead[:499] + "…"
+    added = ADDED.match(lead)
+    if added:
+        text = f"Just shipped {_lower_first(lead[added.end():])} in {name} 🚀"
+    else:
+        text = f"Just shipped in {name}: {lead[:1].upper() + lead[1:]} 🚀"
+    if count > 1:
+        text += f"\n\nPlus {count - 1} more change{'s' if count > 2 else ''}."
     if draft.get("url"):
-        lines += ["", clean(draft["url"])]
-    text = "\n".join(lines)
-    return text if len(text) <= LIMIT else text[: LIMIT - 1] + "…"
+        text += f"\n\n{clean(draft['url'])}"
+    return text[:LIMIT]
 
 
 def _where(cwd):
@@ -169,11 +194,7 @@ def handle(event, cwd_of=herdr.pane_cwd, notify=herdr.notify, now=time.time):
     with paths.lock():
         draft = _record(turn["repo"], turn["head"], where[1])
     if draft:
-        count = len(draft["subjects"])
-        notify(
-            "/dev/null draft ready",
-            f"{draft['name']}: {count} commit{'s' if count != 1 else ''}. Run “Review /dev/null draft” to commit it.",
-        )
+        notify("Draft post ready", f"About what you shipped in {draft['name']}. Review it with “Review /dev/null draft”.")
     return draft
 
 
@@ -193,6 +214,15 @@ def newest():
     if not drafts:
         return None, None
     return max(drafts, key=lambda item: item[1].get("updated", 0))
+
+
+def save_edit(path, text):
+    """Keeps what you wrote while reviewing a draft, so the next review starts from it."""
+    with paths.lock():
+        draft = paths.read_json(path, None)
+        if isinstance(draft, dict):
+            draft["edited"] = text
+            paths.write_json(path, draft)
 
 
 def count():
