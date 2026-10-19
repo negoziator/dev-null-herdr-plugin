@@ -116,8 +116,9 @@ def _view(text):
         print(text)
 
 
-def run(text="", reply=None, images=(), draft=None, dry_run=False, ask=input):
+def run(text="", reply=None, images=(), draft=None, dry_run=False, ask=None):
     """The interactive loop. `draft` is (path, draft) when starting from one. Returns an exit code."""
+    ask = ask or input
     kept = " The draft is kept." if draft else ""
     text = edit(text)
     while True:
@@ -125,7 +126,7 @@ def run(text="", reply=None, images=(), draft=None, dry_run=False, ask=input):
         if error and not text:
             print("Aborted: empty commit." + kept)
             return 1
-        preview(text, reply, images, " · drafted from git" if draft else "")
+        preview(text, reply, images, (" · drafted from git" if draft else "") + (" · DRY RUN" if dry_run else ""))
         if error:
             print(f"\n{error}")
         keys = "[e]dit  [v]iew  [q]uit" if error else "[c]ommit  [e]dit  [v]iew  [q]uit"
@@ -149,7 +150,7 @@ def run(text="", reply=None, images=(), draft=None, dry_run=False, ask=input):
             return commit(text, reply, images, draft, dry_run, ask)
 
 
-def commit(text, reply, images, draft, dry_run, ask=input):
+def commit(text, reply, images, draft, dry_run, ask=None):
     kept = " The draft is kept." if draft else ""
     if dry_run:
         print("\nDry run, nothing sent. Would run:\n  " + shlex.join(script.command(text, reply, images)))
@@ -174,6 +175,9 @@ def commit(text, reply, images, draft, dry_run, ask=input):
 
 def main(args):
     reply, images, draft, text = args.reply, args.image or [], None, args.text or ""
+    dry_run = args.dry_run or paths.config()["dry_run"]
+    if dry_run:
+        print("Dry run: nothing will be sent. `bin/devnull dry-run off` to commit for real.")
     try:
         if args.draft:
             path, data = drafts.newest()
@@ -185,7 +189,7 @@ def main(args):
             others = drafts.count() - 1
             if others:
                 print(f"{others} more draft{'s' if others != 1 else ''} after this one.")
-        code = run(text, reply, images, draft, args.dry_run)
+        code = run(text, reply, images, draft, dry_run)
     except (KeyboardInterrupt, EOFError):
         print("\nNothing committed.")
         code = 130

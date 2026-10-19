@@ -24,6 +24,10 @@ class Isolated(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.addCleanup(lambda: self.assertEqual(self.network_calls, [], "a test reached the network"))
+        # Nor wait for a keyboard: a prompt a test did not answer fails it at once.
+        patcher = mock.patch("builtins.input", side_effect=AssertionError("unexpected prompt"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self):
         os.environ.clear()

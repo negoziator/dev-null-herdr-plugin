@@ -69,8 +69,9 @@ def lock():
 
 
 def config():
-    values = {"drafts": True, **read_json(config_dir() / "config.json", {})}
+    values = {"drafts": True, "dry_run": False, **read_json(config_dir() / "config.json", {})}
     values["drafts"] = values["drafts"] is not False
+    values["dry_run"] = values["dry_run"] is True
     return values
 
 

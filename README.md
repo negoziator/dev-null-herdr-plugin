@@ -59,6 +59,9 @@ the editor with an error (vim's `:cq`) aborts. A GUI editor has to wait for you:
 Control characters, such as terminal escape sequences, are removed before the preview, so what
 you see is exactly what is committed.
 
+To try the composer without sending anything, run `bin/devnull dry-run on` (and `off` when you
+are done): it then shows what it would run instead of committing.
+
 After a commit, herdr shows its link in a notification. Commits can be pending review: /dev/null
 says so in its answer.
 

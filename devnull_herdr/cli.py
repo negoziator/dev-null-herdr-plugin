@@ -34,6 +34,9 @@ def parser():
     toggle = commands.add_parser("drafts", help="list drafts, or turn drafting on or off")
     toggle.add_argument("state", nargs="?", choices=["on", "off", "toggle", "list"], default="list")
 
+    dry = commands.add_parser("dry-run", help="make the composer send nothing, to try it out")
+    dry.add_argument("state", nargs="?", choices=["on", "off"], help="omit to show the setting")
+
     check = commands.add_parser("check-script", help="compare the commit script with the live one")
     check.add_argument("--reset", action="store_true", help="drop an accepted update, use the vendored copy")
     return root
@@ -83,6 +86,13 @@ def _drafts(args):
     return 0
 
 
+def _dry_run(args):
+    if args.state:
+        paths.save_config({"dry_run": args.state == "on"})
+    print(f"Dry run is {'on: the composer sends nothing' if paths.config()['dry_run'] else 'off'}.")
+    return 0
+
+
 def main(argv=None):
     args = parser().parse_args(argv)
     if args.command == "compose":
@@ -95,6 +105,8 @@ def main(argv=None):
         return _open(args)
     if args.command == "drafts":
         return _drafts(args)
+    if args.command == "dry-run":
+        return _dry_run(args)
     if args.command == "check-script":
         if args.reset:
             script.reset()

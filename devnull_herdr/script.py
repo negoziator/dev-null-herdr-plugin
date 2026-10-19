@@ -104,12 +104,13 @@ def _page(text):
         print(text)
 
 
-def check_for_update(ask=input, fetch=None, show=None, out=print):
+def check_for_update(ask=None, fetch=None, show=None, out=print):
     """Asks what to do when the live script differs from the current one.
 
     Returns once the current script is the one to commit with: unchanged, updated, or the
     new version discarded. Discarding is not remembered, so you are asked again next time.
     """
+    ask = ask or input
     remote = (fetch or fetch_remote)()
     if remote is None:
         out("Could not check for a new version of the commit script, using the current one.")

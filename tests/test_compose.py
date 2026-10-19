@@ -115,6 +115,13 @@ class RunTest(Isolated):
         real.assert_not_called()
         check.assert_not_called()
 
+    def test_the_dry_run_setting_reaches_the_composer(self):
+        paths.save_config({"dry_run": True})
+        args = mock.Mock(reply=None, image=None, text="Hello world", draft=False, dry_run=False)
+        with mock.patch.object(compose, "_wait"), mock.patch.object(compose, "run", return_value=0) as run:
+            self.assertEqual(compose.main(args), 0)
+        self.assertTrue(run.call_args.args[4])
+
     def test_end_of_input_at_the_update_prompt_commits_nothing(self):
         def eof(prompt=""):
             raise EOFError
