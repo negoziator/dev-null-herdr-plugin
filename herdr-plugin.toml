@@ -1,0 +1,47 @@
+id = "negoziator.dev-null"
+name = "/dev/null"
+version = "0.1.0"
+min_herdr_version = "0.7.4"
+description = "Commit to /dev/null (dev-null.sh) from herdr: a popup composer, and drafts of what your agents shipped."
+platforms = ["linux", "macos"]
+
+# Panes run with the plugin directory as their working directory.
+[[panes]]
+id = "compose"
+title = "/dev/null commit"
+placement = "popup"
+width = 84
+height = 26
+command = ["python3", "bin/devnull", "compose"]
+
+[[panes]]
+id = "review-draft"
+title = "/dev/null draft"
+placement = "popup"
+width = 84
+height = 26
+command = ["python3", "bin/devnull", "compose", "--draft"]
+
+[[actions]]
+id = "compose"
+title = "Commit to /dev/null"
+description = "Open the composer and commit to /dev/null."
+command = ["python3", "bin/devnull", "open", "compose"]
+
+[[actions]]
+id = "review-draft"
+title = "Review /dev/null draft"
+description = "Edit and commit the newest draft of what an agent shipped."
+command = ["python3", "bin/devnull", "open", "review-draft"]
+
+[[actions]]
+id = "toggle-drafts"
+title = "Toggle /dev/null drafts"
+description = "Turn drafting a commit when an agent ships on or off."
+command = ["python3", "bin/devnull", "drafts", "toggle"]
+
+# Records HEAD when an agent starts working, and drafts a commit from the new
+# git commits when it is done. Never posts anything.
+[[events]]
+on = "pane.agent_status_changed"
+command = ["python3", "bin/devnull", "hook"]
