@@ -196,7 +196,7 @@ class RenderTest(unittest.TestCase):
 
     def test_a_long_post_is_cut(self):
         lines = feed.post_lines(commit(1, body="word " * 400), 40)
-        self.assertIn("… o opens all of it", [line for line, _ in lines])
+        self.assertIn("… O opens all of it", [line for line, _ in lines])
 
     def test_a_notification(self):
         item = {"type": "starred", "actor": {"username": "nuno"}, "actors_count": 3, "created_at": "2026-10-19T19:52:23Z"}
@@ -206,6 +206,15 @@ class RenderTest(unittest.TestCase):
         now = datetime.datetime(2026, 10, 19, 20, 52, 23, tzinfo=datetime.timezone.utc).timestamp()
         self.assertEqual(feed.age("2026-10-19T19:52:23Z", now), "1h")
         self.assertEqual(feed.age("nonsense"), "")
+
+
+class NewPostTest(unittest.TestCase):
+    def test_m_opens_the_composer(self):
+        with mock.patch.object(feed.herdr, "open_pane", return_value=(True, "")) as opened:
+            self.assertIsNone(feed.start_post())
+        opened.assert_called_once_with("compose")
+        with mock.patch.object(feed.herdr, "open_pane", return_value=(False, "ui_busy")):
+            self.assertEqual(feed.start_post(), "ui_busy")
 
 
 class OpenTest(unittest.TestCase):

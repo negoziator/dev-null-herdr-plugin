@@ -131,12 +131,12 @@ Turn drafts off or on with the **Toggle /dev/null drafts** action, or `bin/devnu
 |---|---|
 | `1` `2` `3` `4`, Tab | Following, Latest, Trending, Notifications |
 | `j` `k`, arrows, Space, PgUp/PgDn | move; more posts load as you reach the end |
-| `o` | open the post on dev-null.sh |
-| `r` | reply, in the composer |
-| `s` | star or unstar |
 | `g` | back to the newest post |
-| `R` | refresh now |
-| `q` | close |
+| `M` | write a new post, in the composer |
+| `R` | reply to the selected post, in the composer |
+| `O` | open the post on dev-null.sh |
+| `s` | star or unstar |
+| `Q` | close |
 
 The feed refreshes itself every 30 seconds. New posts slot in at the top, marked `●` until you
 have been on them, and the post you are reading stays where it is on screen; while you are

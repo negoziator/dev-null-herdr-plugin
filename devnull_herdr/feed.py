@@ -1,7 +1,7 @@
 """The feed: /dev/null's Following, Latest and Trending logs, and your notifications, in a pane.
 
-Keys: 1 2 3 switch logs, 4 notifications · j/k or arrows move · o opens in the browser ·
-r replies · s stars · R refreshes · q closes.
+Keys: 1 2 3 switch logs, 4 notifications · j/k or arrows move · g goes to the newest ·
+M writes a new post · R replies · O opens in the browser · s stars · Q closes.
 
 The feed refreshes by itself: new posts slot in at the top, marked until you've been on them,
 and the post you are reading stays where it is on screen. Opening notifications marks them
@@ -104,7 +104,7 @@ def post_lines(commit, cols):
     for row in rows[:MAX_BODY_ROWS]:
         lines.append((row, "body"))
     if len(rows) > MAX_BODY_ROWS:
-        lines.append(("… o opens all of it", "dim"))
+        lines.append(("… O opens all of it", "dim"))
     images = commit.get("images") or []
     if images:
         lines.append((f"[{len(images)} image{'s' if len(images) != 1 else ''}]", "dim"))
@@ -259,6 +259,12 @@ def start_reply(commit):
     return None if ok else error
 
 
+def start_post():
+    """Opens the composer for a new post. Posting needs no sign-in, so this works signed out too."""
+    ok, error = herdr.open_pane("compose")
+    return None if ok else error
+
+
 def open_in_browser(url):
     """Opens a link on dev-null.sh, and nothing else: not a file, not another app's scheme."""
     if not isinstance(url, str) or not url.startswith(api.BASE + "/"):
@@ -311,8 +317,11 @@ def _loop(screen, feed):
             if api.account() and time.monotonic() - feed.refreshed >= REFRESH_EVERY:
                 _safely(feed, feed.refresh)
             continue
-        if key == "q":
+        if key == "Q":
             return 0
+        if key == "M":
+            feed.note = start_post() or ""
+            continue
         if not api.account():
             if key == "l":
                 curses.endwin()
@@ -340,17 +349,15 @@ def _loop(screen, feed):
         elif key == "g":
             feed.selected[feed.name] = feed.top[feed.name] = 0
         elif key == "R":
-            _safely(feed, feed.load)
-        elif key == "s":
-            _safely(feed, feed.toggle_star)
-        elif key == "o":
-            target = feed.target()
-            if target and target.get("html_url"):
-                open_in_browser(target["html_url"])
-        elif key == "r":
             target = feed.target()
             if target and target.get("id"):
                 feed.note = start_reply(target) or ""
+        elif key == "s":
+            _safely(feed, feed.toggle_star)
+        elif key == "O":
+            target = feed.target()
+            if target and target.get("html_url"):
+                open_in_browser(target["html_url"])
 
 
 def _safely(feed, action):
@@ -395,7 +402,7 @@ def _draw(screen, feed, styles):
             "/dev/null at any time (Settings → Devices).",
         ]):
             _put(screen, top + offset, 2, line[: max(cols - 3, 0)])
-        _footer(screen, feed, rows, cols, "l sign in · q close")
+        _footer(screen, feed, rows, cols, "l sign in · M new post · Q close")
         screen.refresh()
         return
     width = max(cols - 4, 10)
@@ -424,9 +431,9 @@ def _draw(screen, feed, styles):
     if not items:
         empty = "Nothing here yet." if feed.name in feed.loaded else "Loading…"
         _put(screen, top, 2, empty, curses.A_DIM)
-    keys = "1-4 tabs · j/k move · o open · r reply · s star · R refresh · q close"
+    keys = "1-4 tabs · j/k move · M new post · R reply · O open · s star · Q close"
     if feed.name == "notifications":
-        keys = "1-4 tabs · j/k move · o open · r reply · R refresh · q close"
+        keys = "1-4 tabs · j/k move · M new post · R reply · O open · Q close"
     _footer(screen, feed, rows, cols, keys)
     screen.refresh()
 
