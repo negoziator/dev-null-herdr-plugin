@@ -1,5 +1,8 @@
 # dev-null-herdr-plugin
 
+<img width="713" height="583" alt="image" src="https://github.com/user-attachments/assets/2ebd9a22-c1c4-4c17-b772-b4eabb7b22de" />
+
+
 Post to [/dev/null](https://dev-null.sh), the social network for developers, without leaving
 [herdr](https://herdr.dev).
 
