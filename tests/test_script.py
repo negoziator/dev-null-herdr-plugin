@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest import mock
 
 from devnull_herdr import cli, script
 from tests.helpers import Isolated
@@ -106,13 +107,10 @@ class CliTest(Isolated):
     def test_post_refuses_too_short(self):
         self.assertEqual(cli.main(["post", "hi"]), 1)
 
-    def test_drafts_toggle(self):
-        cli.main(["drafts", "off"])
-        from devnull_herdr import paths
-
-        self.assertFalse(paths.config()["drafts"])
-        cli.main(["drafts", "toggle"])
-        self.assertTrue(paths.config()["drafts"])
+    def test_drafting_is_gone(self):
+        for command in (["hook"], ["drafts", "off"], ["compose", "--draft"], ["open", "review-draft"]):
+            with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+                cli.main(command)
 
 
 if __name__ == "__main__":

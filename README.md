@@ -7,10 +7,6 @@ Post to [/dev/null](https://dev-null.sh), the social network for developers, wit
 [herdr](https://herdr.dev).
 
 - **Composer**: press a key, type your post in a popup, press Ctrl-S. Done.
-- **Shipped-it drafts**: when an agent you run in herdr ships something (makes git commits), the
-  plugin writes a draft post about it, like *"Just shipped a popup composer in my-app 🚀"*, and
-  tells you. You edit it into your own words and post it, or throw it away. **Nothing is ever
-  posted without you.**
 - **Feed**: Following, Latest and Trending, and your notifications, in a pane next to your
   agents. Open, reply and star from the keyboard. herdr tells you when someone replies.
 
@@ -45,12 +41,6 @@ command = "negoziator.dev-null.compose"
 description = "post to /dev/null"
 
 [[keys.command]]
-key = "prefix+shift+m"
-type = "plugin_action"
-command = "negoziator.dev-null.review-draft"
-description = "review /dev/null draft"
-
-[[keys.command]]
 key = "prefix+f"
 type = "plugin_action"
 command = "negoziator.dev-null.feed"
@@ -79,7 +69,6 @@ or with `herdr plugin action invoke negoziator.dev-null.compose`.
 | arrows, Home/End (or Ctrl-A/Ctrl-E), Backspace, Delete | move and fix |
 | **Ctrl-S** | post it |
 | **Esc** | close without posting; press it twice if you've written something |
-| **Ctrl-D** | throw the draft away (when reviewing a draft) |
 
 **Emoji**: type a colon and two letters of a GitHub shortcode, and the matches show under the
 cursor:
@@ -103,33 +92,6 @@ text is kept, and `e` takes you back to it.
 
 To try the composer without posting anything, run `bin/devnull dry-run on` (and `off` when you
 are done): Ctrl-S then shows what would be sent instead.
-
-## Shipped-it drafts
-
-The plugin listens to herdr's `pane.agent_status_changed` event:
-
-1. When an agent pane starts **working**, it notes where the git repository the pane is in stands.
-2. When the agent is **done**, the commits it made become a draft post for that repository:
-
-   ```
-   Just shipped a popup composer in dev-null-herdr-plugin 🚀
-
-   Plus 2 more changes.
-
-   https://github.com/negoziator/dev-null-herdr-plugin
-   ```
-
-   It leads with the change that adds something ("Add a popup composer", "feat: dark mode"), or
-   else the latest one, and links the repository when it is on GitHub or the like.
-3. herdr tells you a draft is ready. Press `prefix+shift+m` (**Review /dev/null draft**) to edit
-   and post it. A draft that is waiting grows with the next turn's work.
-
-Only commits made on the pane's own branch count: a turn drafts nothing when it made no commit,
-switched branch or rewrote history (rebase, amend), and what a pull or merge brought in is left
-out. A turn not seen to end within 12 hours is dropped. Commit messages can say more than you want
-to share, especially from a private repository: you see every draft before it goes anywhere.
-
-Turn drafts off or on with the **Toggle /dev/null drafts** action, or `bin/devnull drafts off`.
 
 ## The feed
 
@@ -212,26 +174,24 @@ reviewed copy replaces an update you accepted earlier.
 
 ## From a shell
 
-`bin/devnull` works outside herdr too, and shares the drafts:
+`bin/devnull` works outside herdr too:
 
 ```bash
 bin/devnull compose                        # the composer, in this terminal
-bin/devnull compose --draft                # the newest draft
 bin/devnull post 'It was DNS.'             # post straight away, no text box
 bin/devnull post --reply 0be0130 'Agreed!' --image shipped.png
 bin/devnull post --dry-run 'Hello world!'  # shows what would be sent, sends nothing
-bin/devnull drafts                         # lists drafts
 bin/devnull feed                           # the feed, in this terminal
 bin/devnull login                          # sign in for the feed
 ```
 
-From a shell it uses the same sign-in, drafts and settings as herdr does.
+From a shell it uses the same sign-in and settings as herdr does.
 
 ## Files
 
 | What | Where |
 |---|---|
-| Drafts, turn tracking, an updated posting script, the watcher's log (all private to you, `0600`) | `$HERDR_PLUGIN_STATE_DIR` |
+| An unsent post the composer saved, an updated posting script, the watcher's log (all private to you, `0600`) | `$HERDR_PLUGIN_STATE_DIR` |
 | Settings (`config.json`), the sign-in (`account.json`) and its key (`device_ed25519`) | `$HERDR_PLUGIN_CONFIG_DIR` |
 
 Logs: `herdr plugin log list --plugin negoziator.dev-null`.

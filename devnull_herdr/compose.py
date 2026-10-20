@@ -14,12 +14,12 @@ import shlex
 import sys
 import time
 
-from . import drafts, emoji, herdr, paths, script
+from . import emoji, herdr, paths, script
 from .text import clean
 from .textbox import Box, width
 
 MIN, MAX = 3, 4000
-POST, CANCEL, DISCARD = "post", "cancel", "discard"
+POST, CANCEL = "post", "cancel"
 
 
 def message(text):
@@ -37,10 +37,8 @@ def problem(text):
     return None
 
 
-def header(reply, images, draft, dry_run, reply_label=None):
-    kind = "draft post" if draft else "new post"
-    if reply:
-        kind = f"reply to {reply_label or reply}" + (" (draft)" if draft else "")
+def header(reply, images, dry_run, reply_label=None):
+    kind = f"reply to {reply_label or reply}" if reply else "new post"
     parts = ["/dev/null", kind]
     if images:
         parts.append(f"{len(images)} image{'s' if len(images) != 1 else ''}")
@@ -57,7 +55,7 @@ def save_unsent(text, reply, images):
     paths.write_json(recovery_path(), {"text": text, "reply": reply, "images": list(images)})
 
 
-def edit(text, title, draft, rescue=None):
+def edit(text, title, rescue=None):
     """Shows the text box until it is posted or closed. Returns (action, text).
 
     Should the box ever crash, `rescue` is given what was typed, so that it can come back.
@@ -67,7 +65,7 @@ def edit(text, title, draft, rescue=None):
         raise RuntimeError("The composer needs a terminal: use `bin/devnull post` from a script.")
     box = Box(text)
     try:
-        return curses.wrapper(_loop, box, title, draft)
+        return curses.wrapper(_loop, box, title)
     except Exception as error:
         where = rescue(box.text) if rescue else "nowhere: it is lost"
         raise RuntimeError(f"The composer stopped ({type(error).__name__}: {error}). Your text is saved: {where}.")
@@ -86,21 +84,21 @@ def _colors():
         return curses.A_BOLD
 
 
-def _loop(screen, box, title, draft):
+def _loop(screen, box, title):
     curses.raw()  # Ctrl-S and Ctrl-C reach the composer instead of the terminal
     screen.keypad(True)
     # A paste then arrives wrapped in markers, and goes in as text: a Ctrl-S inside it never posts.
     sys.stdout.write(PASTE_ON)
     sys.stdout.flush()
     red = _colors() if curses.has_colors() else curses.A_BOLD
-    keys = "Ctrl-S post · Esc close" + (" · Ctrl-D discard draft" if draft else "")
+    keys = "Ctrl-S post · Esc close"
     state = {"note": "", "top": 0, "pick": 0, "hidden": None}
     while True:
         _draw(screen, box, title, keys, state, red)
         key = _key(screen)
         # Draw once for everything already typed or pasted, not once per character.
         while True:
-            result = _handle(screen, box, key, draft, state)
+            result = _handle(screen, box, key, state)
             if result:
                 return result
             if not _queued(screen):
@@ -162,7 +160,7 @@ def _list(screen, matches, pick, first, cols):
         _put(screen, first + offset, 1, line, curses.A_BOLD | curses.A_REVERSE if offset == pick else curses.A_NORMAL)
 
 
-def _handle(screen, box, key, draft, state):
+def _handle(screen, box, key, state):
     """Applies one key. Returns (action, text) when the box is done, else None."""
     text_cols = max(screen.getmaxyx()[1] - 2, 10)
     confirming, state["note"] = state["note"], ""
@@ -185,7 +183,7 @@ def _handle(screen, box, key, draft, state):
     state["pick"] = 0  # anything else changes the list: the best match first again
     if isinstance(key, tuple):  # a paste: text, whatever it contains
         box.insert(key[1])
-    elif key in ("\x13", "\x04") and _queued(screen):
+    elif key == "\x13" and _queued(screen):
         # More input right behind it: a paste without markers, not a key press. Never act on it.
         state["note"] = "Ignored a Ctrl key inside pasted text."
     elif key == "\x13":  # Ctrl-S
@@ -196,10 +194,6 @@ def _handle(screen, box, key, draft, state):
         if confirming == CLOSING or not box.text.strip():
             return CANCEL, box.text
         state["note"] = CLOSING
-    elif key == "\x04" and draft:  # Ctrl-D: twice, it deletes the draft
-        if confirming == DISCARDING:
-            return DISCARD, box.text
-        state["note"] = DISCARDING
     elif key is None:
         pass  # a key sequence the composer doesn't use
     elif key in ("\x7f", "\x08", curses.KEY_BACKSPACE):
@@ -226,7 +220,6 @@ def _handle(screen, box, key, draft, state):
 
 
 CLOSING = "Press Esc again to close without posting."
-DISCARDING = "Press Ctrl-D again to throw this draft away."
 PASTE_ON, PASTE_OFF = "\x1b[?2004h", "\x1b[?2004l"
 PASTE_START, PASTE_END = "[200~", "\x1b[201~"
 PASTE_LIMIT = 5
@@ -322,39 +315,28 @@ def _put(screen, row, column, text, attributes=0):
         pass
 
 
-def run(text="", reply=None, images=(), draft=None, dry_run=False, ask=None, ui=None, reply_label=None):
-    """Shows the box until the post is sent or given up. `draft` is (path, draft). Returns an exit code."""
+def run(text="", reply=None, images=(), dry_run=False, ask=None, ui=None, reply_label=None):
+    """Shows the box until the post is sent or given up. Returns an exit code."""
     ask, ui = ask or input, ui or edit
 
     def rescue(typed):
-        if draft:
-            drafts.save_edit(draft[0], typed)
-            return "it comes back when you review the draft again"
         save_unsent(typed, reply, images)
         return "it comes back the next time you open the composer"
 
-    kept = " The draft is kept." if draft else ""
     while True:
-        action, text = ui(text, header(reply, images, draft, dry_run, reply_label), draft is not None, rescue=rescue)
+        action, text = ui(text, header(reply, images, dry_run, reply_label), rescue=rescue)
         if action == CANCEL:
-            print("Nothing posted." + kept)
-            return 1
-        if action == DISCARD:
-            if drafts.discard(*draft):
-                print("Draft discarded.")
-            else:
-                print("The draft got new commits while you were reviewing it, so it is kept.")
+            print("Nothing posted.")
             return 1
         text = message(text)
         if problem(text):
             continue
-        code = post(text, reply, images, draft, dry_run, ask)
+        code = post(text, reply, images, dry_run, ask)
         if code != 1 or ask("\nPress e to edit the post again, Enter to close: ").strip().lower() != "e":
             return code
 
 
-def post(text, reply, images, draft, dry_run, ask=None):
-    kept = " The draft is kept." if draft else ""
+def post(text, reply, images, dry_run, ask=None):
     if dry_run:
         print("Dry run, nothing sent. This post:\n")
         print(text)
@@ -365,24 +347,22 @@ def post(text, reply, images, draft, dry_run, ask=None):
     try:
         ok, url, output = script.commit(text, reply, images)
     except KeyboardInterrupt:
-        print("\nInterrupted: the post may have been sent. Check your profile on dev-null.sh." + kept)
+        print("\nInterrupted: the post may have been sent. Check your profile on dev-null.sh.")
         return 130
     if not ok:
         if output:
             print(output)
-        print("\nNot posted." + kept)
+        print("\nNot posted.")
         return 1
     print(f"Posted: {url}" if url else output)
     if url and "pending review" in output:
         print("It is pending review: only you can see it until it is approved.")
-    if draft and not drafts.discard(*draft):
-        print("The draft got new commits while you were reviewing it: they are still in it.")
     herdr.notify("Posted to /dev/null", url or output, sound="done")
     return 0
 
 
 def main(args):
-    reply, images, draft, text = args.reply, args.image or [], None, args.text or ""
+    reply, images, text = args.reply, args.image or [], args.text or ""
     dry_run = args.dry_run or paths.config()["dry_run"]
     reply_label = None
     if getattr(args, "pending_reply", False) is True:
@@ -396,26 +376,16 @@ def main(args):
         reply = picked["id"]
         reply_label = f"@{picked.get('username')}: {picked.get('excerpt') or ''}"[:60]
     try:
-        if args.draft:
-            path, data = drafts.newest()
-            if data is None:
-                print("No drafts yet: one is made when an agent you run in herdr ships a commit.")
-                _wait()
-                return 1
-            draft, text = (path, data), drafts.render(data)
-        unsent = None if (draft or text) else paths.read_json(recovery_path(), {}).get("text")
+        unsent = None if text else paths.read_json(recovery_path(), {}).get("text")
         if unsent:
             # The post a crash saved, with what it was replying to, unless told otherwise.
             saved = paths.read_json(recovery_path(), {})
             text, reply = unsent, reply or saved.get("reply")
             images = images or [image for image in saved.get("images", []) if isinstance(image, str)]
-        code = run(text, reply, images, draft, dry_run, reply_label=reply_label)
+        code = run(text, reply, images, dry_run, reply_label=reply_label)
         if unsent:
             # Shown again: posted, or closed on purpose. Either way it has served its turn.
             recovery_path().unlink(missing_ok=True)
-        if draft and code == 0 and drafts.count():
-            others = drafts.count()
-            print(f"{others} more draft{'s' if others != 1 else ''} waiting.")
     except (KeyboardInterrupt, EOFError):
         print("\nNothing posted.")
         code = 130

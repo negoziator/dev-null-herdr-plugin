@@ -1,13 +1,11 @@
 """Where the plugin keeps its files.
 
 herdr hands every command its own config and state directories. Outside herdr (running
-`bin/devnull` from a shell) the XDG equivalents are used, so both see the same drafts.
+`bin/devnull` from a shell) the XDG equivalents are used, so both see the same files.
 Nothing is ever written to the plugin directory: a GitHub install is a managed checkout.
-Drafts can quote a private repository, so every file is private to the user.
+The sign-in key and unsent posts are yours alone, so every file is private to the user.
 """
 
-import contextlib
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -20,7 +18,7 @@ PLUGIN_ID = "negoziator.dev-null"
 
 def _dir(env, xdg_env, xdg_default, herdr_dir):
     """herdr's directory for the plugin; from a shell the same one when herdr made it, so that
-    a sign-in or a draft is the same in both; else an XDG one."""
+    a sign-in is the same in both; else an XDG one."""
     if os.environ.get(env):
         path = Path(os.environ[env])
     else:
@@ -63,20 +61,9 @@ def write_json(path, data):
     private_file(path, json.dumps(data, indent=2) + "\n")
 
 
-@contextlib.contextmanager
-def lock():
-    """One writer at a time for the drafts and turn state: hooks of several panes run at once."""
-    fd = os.open(state_dir() / ".lock", os.O_WRONLY | os.O_CREAT, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
-        os.close(fd)
-
-
 def config():
-    values = {"drafts": True, "dry_run": False, **read_json(config_dir() / "config.json", {})}
-    values["drafts"] = values["drafts"] is not False
+    values = {"dry_run": False, **read_json(config_dir() / "config.json", {})}
+    values.pop("drafts", None)  # the setting of a feature that is gone
     values["dry_run"] = values["dry_run"] is True
     return values
 

@@ -462,7 +462,7 @@ class ReplyTest(Isolated):
         with mock.patch.object(feed.herdr, "open_pane", return_value=(True, "")) as opened:
             self.assertIsNone(feed.start_reply(commit(5, body="What a post")))
         opened.assert_called_once_with("reply")
-        args = mock.Mock(reply=None, image=None, text=None, draft=False, dry_run=False, pending_reply=True)
+        args = mock.Mock(reply=None, image=None, text=None, dry_run=False, pending_reply=True)
         with mock.patch.object(compose, "_wait"), mock.patch.object(compose, "run", return_value=0) as run:
             compose.main(args)
         self.assertEqual(run.call_args.args[1], commit(5)["id"])

@@ -29,7 +29,7 @@ def typable(char):
 
 class Box:
     def __init__(self, text=""):
-        # Through insert, so a draft or a starting text is filtered like anything typed.
+        # Through insert, so a starting or saved text is filtered like anything typed.
         self.text, self.cursor = "", 0
         self.insert(text)
 

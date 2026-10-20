@@ -1,7 +1,7 @@
 import unittest
 from unittest import mock
 
-from devnull_herdr import compose, drafts, paths, script
+from devnull_herdr import compose, paths, script
 from tests.helpers import Isolated
 
 
@@ -18,11 +18,11 @@ class MessageTest(unittest.TestCase):
         self.assertIn("1 characters too long", compose.problem("x" * 4001))
 
     def test_header(self):
-        self.assertEqual(compose.header(None, [], None, False), "/dev/null · new post")
-        self.assertEqual(compose.header("01a1-uuid", [], None, False, "@nuno: hi"), "/dev/null · reply to @nuno: hi")
+        self.assertEqual(compose.header(None, [], False), "/dev/null · new post")
+        self.assertEqual(compose.header("01a1-uuid", [], False, "@nuno: hi"), "/dev/null · reply to @nuno: hi")
         self.assertEqual(
-            compose.header("0be0130", ["a.png"], ("p", {}), True),
-            "/dev/null · reply to 0be0130 (draft) · 1 image · DRY RUN, nothing is sent",
+            compose.header("0be0130", ["a.png"], True),
+            "/dev/null · reply to 0be0130 · 1 image · DRY RUN, nothing is sent",
         )
 
 
@@ -31,8 +31,8 @@ class RunTest(Isolated):
         """A text box that answers with `results`, one per time it is shown."""
         results, self.shown = iter(results), []
 
-        def show(text, title, draft, rescue=None):
-            self.shown.append((text, title, draft))
+        def show(text, title, rescue=None):
+            self.shown.append((text, title))
             self.rescue = rescue
             return next(results)
 
@@ -41,11 +41,6 @@ class RunTest(Isolated):
     def answers(self, *keys):
         keys = iter(keys)
         return lambda prompt="": next(keys)
-
-    def draft(self, **fields):
-        path = drafts.drafts_dir() / "x.json"
-        paths.write_json(path, {"name": "x", "subjects": ["A"], "updated": 1, **fields})
-        return path, paths.read_json(path, {})
 
     def test_closing_posts_nothing(self):
         with mock.patch.object(compose, "post") as post:
@@ -77,13 +72,13 @@ class RunTest(Isolated):
 
     def test_the_dry_run_setting_reaches_the_composer(self):
         paths.save_config({"dry_run": True})
-        args = mock.Mock(reply=None, image=None, text="Hello world", draft=False, dry_run=False)
+        args = mock.Mock(reply=None, image=None, text="Hello world", dry_run=False)
         with mock.patch.object(compose, "_wait"), mock.patch.object(compose, "run", return_value=0) as run:
             self.assertEqual(compose.main(args), 0)
-        self.assertTrue(run.call_args.args[4])
+        self.assertTrue(run.call_args.args[3])
 
     def test_no_terminal_is_reported(self):
-        args = mock.Mock(reply=None, image=None, text="", draft=False, dry_run=False)
+        args = mock.Mock(reply=None, image=None, text="", dry_run=False)
         with mock.patch.object(compose, "_wait") as wait, mock.patch("sys.stdin") as stdin:
             stdin.isatty.return_value = False
             self.assertEqual(compose.main(args), 1)
@@ -96,50 +91,25 @@ class RunTest(Isolated):
         with mock.patch.object(script, "fetch_remote", return_value=b"#!/bin/sh\n# changed\n"):
             with mock.patch.object(script, "commit") as real:
                 with self.assertRaises(EOFError):
-                    compose.post("Hello world", None, [], None, False, ask=eof)
+                    compose.post("Hello world", None, [], False, ask=eof)
         real.assert_not_called()
 
     def test_interrupted_post_may_have_been_sent(self):
-        draft = self.draft()
         with mock.patch.object(script, "check_for_update"), mock.patch.object(script, "commit", side_effect=KeyboardInterrupt):
             with mock.patch("builtins.print") as printed:
-                self.assertEqual(compose.post("Hello world", None, [], draft, False), 130)
+                self.assertEqual(compose.post("Hello world", None, [], False), 130)
         self.assertIn("may have been sent", printed.call_args.args[0])
-        self.assertTrue(draft[0].exists())
 
     def test_pending_review_is_explained(self):
         url = "https://dev-null.sh/@me/commits/1"
         answer = f"Committed: {url} (pending review, only you can see it until it is approved)"
         with mock.patch.object(script, "check_for_update"), mock.patch.object(script, "commit", return_value=(True, url, answer)):
             with mock.patch("builtins.print") as printed:
-                compose.post("Hello world", None, [], None, False)
+                compose.post("Hello world", None, [], False)
         said = [call.args[0] for call in printed.call_args_list if call.args]
         self.assertIn(f"Posted: {url}", said)
         self.assertTrue(any("pending review" in line for line in said))
 
-    def test_discarding_a_draft_removes_it(self):
-        draft = self.draft()
-        self.assertEqual(compose.run("Shipped", draft=draft, ui=self.ui((compose.DISCARD, "Shipped"))), 1)
-        self.assertFalse(draft[0].exists())
-        self.assertTrue(self.shown[0][2])
-
-    def test_a_posted_draft_is_removed_a_failed_one_kept(self):
-        draft = self.draft()
-        with mock.patch.object(script, "check_for_update"):
-            with mock.patch.object(script, "commit", return_value=(False, None, "Slow down")):
-                compose.post("Shipped", None, [], draft, False)
-            self.assertTrue(draft[0].exists())
-            with mock.patch.object(script, "commit", return_value=(True, "https://dev-null.sh/@me/commits/1", "")):
-                compose.post("Shipped", None, [], draft, False)
-        self.assertFalse(draft[0].exists())
-
-    def test_a_draft_that_grew_during_review_is_kept(self):
-        draft = self.draft()
-        paths.write_json(draft[0], {**draft[1], "subjects": ["A", "B"], "updated": 2})
-        with mock.patch.object(script, "check_for_update"):
-            with mock.patch.object(script, "commit", return_value=(True, "https://dev-null.sh/@me/commits/1", "")):
-                compose.post("Shipped", None, [], draft, False)
-        self.assertTrue(draft[0].exists())
 
 
 if __name__ == "__main__":
@@ -197,23 +167,9 @@ class HandleTest(unittest.TestCase):
 
         self.box, self.state = Box("Shipped it"), {"note": "", "top": 0}
 
-    def press(self, key, queued=(), draft=True):
+    def press(self, key, queued=()):
         with mock.patch.object(compose, "_queued", return_value=bool(queued)):
-            return compose._handle(FakeScreen([]), self.box, key, draft, self.state)
-
-    def test_ctrl_d_twice_discards(self):
-        self.assertIsNone(self.press("\x04"))
-        self.assertEqual(self.state["note"], compose.DISCARDING)
-        self.assertEqual(self.press("\x04"), (compose.DISCARD, "Shipped it"))
-
-    def test_another_key_between_resets_the_confirmation(self):
-        self.press("\x04")
-        self.press("!")
-        self.assertIsNone(self.press("\x04"))
-
-    def test_ctrl_d_does_nothing_without_a_draft(self):
-        self.assertIsNone(self.press("\x04", draft=False))
-        self.assertIsNone(self.press("\x04", draft=False))
+            return compose._handle(FakeScreen([]), self.box, key, self.state)
 
     def test_ctrl_s_with_more_input_waiting_never_posts(self):
         self.assertIsNone(self.press("\x13", queued=True))
@@ -307,17 +263,8 @@ class RecoveryTest(Isolated):
         self.assertEqual((saved["text"], saved["reply"]), ("Half a post and then some", "0be0130"))
         self.assertEqual(oct(compose.recovery_path().stat().st_mode & 0o777), "0o600")
 
-    def test_a_crash_while_reviewing_a_draft_keeps_the_edit_in_the_draft(self):
-        path = drafts.drafts_dir() / "x.json"
-        paths.write_json(path, {"name": "x", "subjects": ["Add a thing"], "updated": 1})
-        draft = (path, paths.read_json(path, {}))
-        with self.crash_with(" (my words)"), self.assertRaisesRegex(RuntimeError, "review the draft again"):
-            compose.run(drafts.render(draft[1]), draft=draft)
-        self.assertFalse(compose.recovery_path().exists())
-        self.assertEqual(drafts.render(paths.read_json(path, {})), "Just shipped a thing in x 🚀 (my words)")
-
     def args(self, text=None, reply=None):
-        return mock.Mock(reply=reply, image=None, text=text, draft=False, dry_run=False)
+        return mock.Mock(reply=reply, image=None, text=text, dry_run=False)
 
     def test_the_next_composer_starts_from_it(self):
         compose.save_unsent("Saved post", "0be0130", [])

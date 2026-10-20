@@ -2,7 +2,7 @@
 
 What the preview shows must be what is committed. A control character, such as the start of a
 terminal escape sequence, could hide or rewrite part of the preview while still being sent, so
-it never gets that far: commits, drafts and git subjects are cleaned of them first.
+it never gets that far: posts and what the feed shows are cleaned of them first.
 """
 
 import re
