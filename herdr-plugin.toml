@@ -1,6 +1,6 @@
 id = "negoziator.dev-null"
 name = "/dev/null"
-version = "0.3.0"
+version = "0.4.0"
 min_herdr_version = "0.7.4"
 description = "Post to /dev/null (dev-null.sh) from herdr: a popup composer, and your feed in a pane."
 platforms = ["linux", "macos"]
