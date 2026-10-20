@@ -2,6 +2,10 @@
 
 Type the post, see its length as you go, and post it with Ctrl-S. What the box shows is what is
 posted: control characters can't be typed or pasted into it.
+
+Emoji go in by their GitHub shortcode: type `:st` and a list of matches opens under the cursor.
+Up and Down choose, Tab or Enter puts the emoji in, Esc hides the list. Typing the closing colon
+of a whole shortcode, as in `:star:`, puts its emoji in as well.
 """
 
 import curses
@@ -10,9 +14,9 @@ import shlex
 import sys
 import time
 
-from . import drafts, herdr, paths, script
+from . import drafts, emoji, herdr, paths, script
 from .text import clean
-from .textbox import Box
+from .textbox import Box, width
 
 MIN, MAX = 3, 4000
 POST, CANCEL, DISCARD = "post", "cancel", "discard"
@@ -90,7 +94,7 @@ def _loop(screen, box, title, draft):
     sys.stdout.flush()
     red = _colors() if curses.has_colors() else curses.A_BOLD
     keys = "Ctrl-S post · Esc close" + (" · Ctrl-D discard draft" if draft else "")
-    state = {"note": "", "top": 0}
+    state = {"note": "", "top": 0, "pick": 0, "hidden": None}
     while True:
         _draw(screen, box, title, keys, state, red)
         key = _key(screen)
@@ -121,6 +125,15 @@ def _draw(screen, box, title, keys, state, red):
     _put(screen, rows - 2, 1, f"{count}/{MAX}", red if count > MAX else curses.A_DIM)
     if state["note"]:
         _put(screen, rows - 2, len(f"{count}/{MAX}") + 3, state["note"][: max(cols - 12, 0)], red)
+    cursor_row = 2 + row - top
+    # The list goes under the cursor's row, or over it: never on it, nor on the footer.
+    below, above = rows - 4 - cursor_row, cursor_row - 2
+    state["room"] = below if below >= emoji.LIMIT else max(below, above)
+    start, matches = suggestions(box, state)
+    if matches:
+        keys = "Tab/Enter put it in · ↑↓ choose · Esc hide"
+        first = cursor_row + 1 if below >= len(matches) else cursor_row - len(matches)
+        _list(screen, matches, state["pick"], first, cols)
     _put(screen, rows - 1, 1, keys[: max(cols - 2, 0)], curses.A_DIM)
     try:
         screen.move(max(min(2 + row - top, rows - 4), 0), max(min(1 + column, cols - 1), 0))
@@ -129,10 +142,47 @@ def _draw(screen, box, title, keys, state, red):
     screen.refresh()
 
 
+def suggestions(box, state):
+    """(start, [(name, emoji)]) for the shortcode being typed, unless Esc hid its list."""
+    typing = emoji.typing(box.text, box.cursor)
+    if not typing:
+        state["hidden"] = None  # out of that shortcode: the next one gets its list again
+    if not typing or typing[0] == state.get("hidden"):
+        return None, []
+    matches = emoji.search(typing[1], limit=max(min(state.get("room", emoji.LIMIT), emoji.LIMIT), 0))
+    state["pick"] = min(state.get("pick", 0), max(len(matches) - 1, 0))
+    return typing[0], matches
+
+
+def _list(screen, matches, pick, first, cols):
+    """The matching emoji, one per row from row `first`, each row as wide as the box."""
+    for offset, (name, char) in enumerate(matches):
+        line = f" {'❯' if offset == pick else ' '} {char}  :{name}:"
+        line += " " * max(cols - 2 - sum(width(c) for c in line), 0)
+        _put(screen, first + offset, 1, line, curses.A_BOLD | curses.A_REVERSE if offset == pick else curses.A_NORMAL)
+
+
 def _handle(screen, box, key, draft, state):
     """Applies one key. Returns (action, text) when the box is done, else None."""
     text_cols = max(screen.getmaxyx()[1] - 2, 10)
     confirming, state["note"] = state["note"], ""
+    start, matches = suggestions(box, state)
+    if matches and key in (curses.KEY_UP, curses.KEY_DOWN):
+        state["pick"] = (state["pick"] + (1 if key == curses.KEY_DOWN else -1)) % len(matches)
+        return None
+    # Not with more input right behind it: that is a paste without markers, whose Enter and Tab are text.
+    if matches and key in ("\t", "\n", "\r", curses.KEY_ENTER) and not _queued(screen):
+        box.complete(start, matches[state["pick"]][1])
+        state["pick"] = 0
+        return None
+    if matches and key == "\x1b":  # Esc hides the list, and closes nothing
+        state["hidden"] = start
+        return None
+    typing = emoji.typing(box.text, box.cursor)
+    if key == ":" and typing and typing[1] in emoji.shortcodes() and not _queued(screen):
+        box.complete(typing[0], emoji.shortcodes()[typing[1]])
+        return None
+    state["pick"] = 0  # anything else changes the list: the best match first again
     if isinstance(key, tuple):  # a paste: text, whatever it contains
         box.insert(key[1])
     elif key in ("\x13", "\x04") and _queued(screen):

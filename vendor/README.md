@@ -9,3 +9,9 @@
 
 Updating it: download the live script, read the diff, replace the file, and update the hash here and in
 `tests/test_script.py`.
+
+# vendor/emoji.json
+
+GitHub's emoji shortcodes (`"star": "⭐"`), for the composer's emoji list. Made from
+[github/gemoji](https://github.com/github/gemoji) v4.1.0 (commit `5476a66`), MIT licence:
+`db/emoji.json`, keeping only each alias and its emoji, in gemoji's order.

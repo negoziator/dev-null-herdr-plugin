@@ -39,6 +39,11 @@ class Box:
         self.text = self.text[: self.cursor] + chars + self.text[self.cursor :]
         self.cursor += len(chars)
 
+    def complete(self, start, chars):
+        """Replaces what is between `start` and the cursor with `chars`: a shortcode with its emoji."""
+        self.text = self.text[:start] + chars + self.text[self.cursor :]
+        self.cursor = start + len(chars)
+
     def backspace(self):
         if self.cursor:
             self.text = self.text[: self.cursor - 1] + self.text[self.cursor :]

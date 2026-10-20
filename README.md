@@ -81,6 +81,20 @@ or with `herdr plugin action invoke negoziator.dev-null.compose`.
 | **Esc** | close without posting; press it twice if you've written something |
 | **Ctrl-D** | throw the draft away (when reviewing a draft) |
 
+**Emoji**: type a colon and two letters of a GitHub shortcode, and the matches show under the
+cursor:
+
+```
+ Shipped the threads :st
+  ❯ ⭐  :star:
+    🍲  :stew:
+    🌟  :star2:
+```
+
+Up/Down choose, Tab or Enter puts the emoji in, and Esc hides the list (it doesn't close the
+composer). Typing a whole shortcode with its closing colon, like `:rocket:`, turns it into 🚀
+too. Links and times such as `https://` or `10:30` never open the list.
+
 The counter shows the length as you type, in red past /dev/null's 4000 characters. What the box
 shows is exactly what is posted: control characters, such as terminal escape sequences, can't be
 typed or pasted into it. After posting, herdr shows the post's link in a notification. A post can

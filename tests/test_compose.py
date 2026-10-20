@@ -225,6 +225,67 @@ class HandleTest(unittest.TestCase):
         self.assertEqual(self.box.text, "Shipped it!")
 
 
+
+class EmojiTest(HandleTest):
+    def type(self, text):
+        for char in text:
+            self.press(char)
+
+    def test_typing_a_shortcode_opens_the_list(self):
+        self.type(" :st")
+        start, matches = compose.suggestions(self.box, self.state)
+        self.assertEqual(start, 11)
+        self.assertEqual(matches[0], ("star", "⭐"))
+
+    def test_enter_or_tab_puts_the_chosen_emoji_in(self):
+        self.type(" :st")
+        self.press(compose.curses.KEY_DOWN)
+        self.press("\n")
+        self.assertEqual(self.box.text, "Shipped it 🍲")
+        self.type(" :rock")
+        self.press("\t")
+        self.assertEqual(self.box.text, "Shipped it 🍲 🪨")
+
+    def test_up_wraps_around_to_the_last(self):
+        self.type(" :st")
+        self.press(compose.curses.KEY_UP)
+        _, matches = compose.suggestions(self.box, self.state)
+        self.assertEqual(self.state["pick"], len(matches) - 1)
+
+    def test_the_closing_colon_puts_it_in(self):
+        self.type(" :rocket:")
+        self.assertEqual(self.box.text, "Shipped it 🚀")
+        self.type(" :nope:")
+        self.assertEqual(self.box.text, "Shipped it 🚀 :nope:")
+
+    def test_esc_hides_the_list_and_closes_nothing(self):
+        self.type(" :st")
+        self.assertIsNone(self.press("\x1b"))
+        self.assertEqual(self.state["note"], "")
+        self.assertEqual(compose.suggestions(self.box, self.state), (None, []))
+        self.press("\n")
+        self.assertEqual(self.box.text, "Shipped it :st\n")
+        self.type(":ro")
+        self.assertTrue(compose.suggestions(self.box, self.state)[1])
+
+    def test_a_paste_without_markers_keeps_its_new_lines(self):
+        self.type(" :ok")
+        self.press("\n", queued=True)
+        self.press(":", queued=True)
+        self.assertEqual(self.box.text, "Shipped it :ok\n:")
+
+    def test_a_small_popup_shows_fewer_matches(self):
+        self.state["room"] = 2
+        self.type(" :st")
+        self.assertEqual(len(compose.suggestions(self.box, self.state)[1]), 2)
+        self.state["room"] = 0
+        self.assertEqual(compose.suggestions(self.box, self.state), (11, []))
+
+    def test_enter_without_a_list_is_a_new_line(self):
+        self.press("\n")
+        self.assertEqual(self.box.text, "Shipped it\n")
+
+
 class RecoveryTest(Isolated):
     def crash_with(self, typed):
         def crash(loop, box, *rest):
