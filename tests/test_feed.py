@@ -409,12 +409,20 @@ class RenderTest(unittest.TestCase):
         item = {"type": "starred", "actor": {"username": "nuno"}, "actors_count": 3, "created_at": "2026-10-19T19:52:23Z"}
         self.assertIn("@nuno and 2 others starred", feed.notification_lines(item, 60)[0][0])
 
-    def test_the_username_and_age_are_found_in_the_first_line(self):
-        head = feed.post_lines(commit(1, author={"username": "nuno-maduro", "name": "Nuno @ Laravel"}), 60)[0][0]
-        spans = {kind: head[start:end] for start, end, kind in feed.head_spans(head)}
-        self.assertEqual(spans["username"], "@nuno-maduro")
+    def spans(self, author):
+        head = feed.post_lines(commit(1, author=author), 60)[0][0]
+        return {kind: head[start:end] for start, end, kind in feed.head_spans(head)}
+
+    def test_a_name_stands_out_and_the_username_after_it_is_gray(self):
+        spans = self.spans({"username": "nuno-maduro", "name": "Nuno @work Maduro"})
+        self.assertEqual((spans["name"], spans["handle"]), ("Nuno @work Maduro", "@nuno-maduro"))
         self.assertRegex(spans["age"], r"^(\d+[mhd]|now)$")
-        self.assertEqual(feed.head_spans("@x · 3h"), [(0, 2, "username"), (5, 7, "age")])
+
+    def test_a_username_on_its_own_is_the_name(self):
+        spans = self.spans({"username": "nuno"})
+        self.assertEqual(spans["name"], "@nuno")
+        self.assertNotIn("handle", spans)
+        self.assertEqual(feed.head_spans("@x · 3h"), [(0, 2, "name"), (5, 7, "age")])
         self.assertEqual(feed.head_spans("no one here"), [])
 
     def test_age(self):

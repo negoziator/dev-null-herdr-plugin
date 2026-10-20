@@ -32,10 +32,11 @@ VERBS = {
     "replied": "replied to you", "mentioned": "mentioned you", "quoted": "quoted you", "starred": "starred",
     "followed": "followed you", "approved": "your post was approved", "rejected": "your post was rejected",
 }
-# In a post's first line: the author's @username, and how long ago it was posted.
-USERNAME = re.compile(r"@[A-Za-z0-9_-]+")
+# In a post's first line: the author's @username, which the age follows, and the age.
+USERNAME = re.compile(r"(?:^|(?<= ))@[A-Za-z0-9_-]+(?= · )")
 AGE = re.compile(r"(?<= · )(?:\d+[mhd]|now)\b")
 LIGHT_ORANGE = 215  # of the 256 colors; terminals with 8 get yellow
+GRAY = 245
 ICONS = {"replied": "↩", "mentioned": "@", "quoted": "❝", "starred": "★", "followed": "+", "approved": "✓", "rejected": "✗"}
 
 
@@ -131,11 +132,16 @@ def post_lines(commit, cols, in_thread=False):
 
 
 def head_spans(text):
-    """Where the @username and the age are in a post's first line, as (start, end, style)."""
+    """Where the author and the age are in a post's first line, as (start, end, style). The
+    author's name stands out, and the @username after it is gray; an @username on its own is
+    the name."""
     spans = []
     user = USERNAME.search(text)
     if user:
-        spans.append((user.start(), user.end(), "username"))
+        name = text[: user.start()].rstrip()
+        if name:
+            spans.append((0, len(name), "name"))
+        spans.append((user.start(), user.end(), "handle" if name else "name"))
     age = AGE.search(text, user.end() if user else 0)
     if age:
         spans.append((age.start(), age.end(), "age"))
@@ -413,16 +419,20 @@ def main(args=None):
 
 def _styles():
     styles = {"head": curses.A_BOLD, "body": curses.A_NORMAL, "dim": curses.A_DIM, "quote": curses.A_DIM,
-              "accent": curses.A_BOLD | curses.A_REVERSE, "username": curses.A_BOLD, "age": curses.A_BOLD}
+              "accent": curses.A_BOLD | curses.A_REVERSE, "name": curses.A_BOLD, "handle": curses.A_DIM,
+              "age": curses.A_BOLD}
     if curses.has_colors():
         try:
             curses.use_default_colors()
             curses.init_pair(1, curses.COLOR_MAGENTA, -1)
             curses.init_pair(2, curses.COLOR_CYAN, -1)
             curses.init_pair(3, LIGHT_ORANGE if curses.COLORS >= 256 else curses.COLOR_YELLOW, -1)
+            if curses.COLORS >= 256:  # with 8 colors, dim has to do for gray
+                curses.init_pair(4, GRAY, -1)
+                styles["handle"] = curses.color_pair(4)
             styles["accent"] = curses.color_pair(1) | curses.A_BOLD
             styles["quote"] = curses.color_pair(2)
-            styles["username"] = curses.color_pair(3) | curses.A_BOLD
+            styles["name"] = curses.color_pair(3) | curses.A_BOLD
             styles["age"] = curses.color_pair(1)
         except curses.error:
             pass
