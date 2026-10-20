@@ -409,6 +409,14 @@ class RenderTest(unittest.TestCase):
         item = {"type": "starred", "actor": {"username": "nuno"}, "actors_count": 3, "created_at": "2026-10-19T19:52:23Z"}
         self.assertIn("@nuno and 2 others starred", feed.notification_lines(item, 60)[0][0])
 
+    def test_the_username_and_age_are_found_in_the_first_line(self):
+        head = feed.post_lines(commit(1, author={"username": "nuno-maduro", "name": "Nuno @ Laravel"}), 60)[0][0]
+        spans = {kind: head[start:end] for start, end, kind in feed.head_spans(head)}
+        self.assertEqual(spans["username"], "@nuno-maduro")
+        self.assertRegex(spans["age"], r"^(\d+[mhd]|now)$")
+        self.assertEqual(feed.head_spans("@x · 3h"), [(0, 2, "username"), (5, 7, "age")])
+        self.assertEqual(feed.head_spans("no one here"), [])
+
     def test_age(self):
         now = datetime.datetime(2026, 10, 19, 20, 52, 23, tzinfo=datetime.timezone.utc).timestamp()
         self.assertEqual(feed.age("2026-10-19T19:52:23Z", now), "1h")

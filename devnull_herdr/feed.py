@@ -14,6 +14,7 @@ read on /dev/null, as the site does, so they load only while that tab is open.
 
 import curses
 import datetime
+import re
 import shutil
 import subprocess
 import time
@@ -31,6 +32,10 @@ VERBS = {
     "replied": "replied to you", "mentioned": "mentioned you", "quoted": "quoted you", "starred": "starred",
     "followed": "followed you", "approved": "your post was approved", "rejected": "your post was rejected",
 }
+# In a post's first line: the author's @username, and how long ago it was posted.
+USERNAME = re.compile(r"@[A-Za-z0-9_-]+")
+AGE = re.compile(r"(?<= · )(?:\d+[mhd]|now)\b")
+LIGHT_ORANGE = 215  # of the 256 colors; terminals with 8 get yellow
 ICONS = {"replied": "↩", "mentioned": "@", "quoted": "❝", "starred": "★", "followed": "+", "approved": "✓", "rejected": "✗"}
 
 
@@ -123,6 +128,18 @@ def post_lines(commit, cols, in_thread=False):
     star = "★" if commit.get("starred") else "☆"
     lines.append((f"{star} {number(commit.get('stars_count'))}   ↩ {number(commit.get('replies_count'))}", "dim"))
     return lines
+
+
+def head_spans(text):
+    """Where the @username and the age are in a post's first line, as (start, end, style)."""
+    spans = []
+    user = USERNAME.search(text)
+    if user:
+        spans.append((user.start(), user.end(), "username"))
+    age = AGE.search(text, user.end() if user else 0)
+    if age:
+        spans.append((age.start(), age.end(), "age"))
+    return spans
 
 
 def notification_lines(item, cols):
@@ -396,14 +413,17 @@ def main(args=None):
 
 def _styles():
     styles = {"head": curses.A_BOLD, "body": curses.A_NORMAL, "dim": curses.A_DIM, "quote": curses.A_DIM,
-              "accent": curses.A_BOLD | curses.A_REVERSE}
+              "accent": curses.A_BOLD | curses.A_REVERSE, "username": curses.A_BOLD, "age": curses.A_BOLD}
     if curses.has_colors():
         try:
             curses.use_default_colors()
             curses.init_pair(1, curses.COLOR_MAGENTA, -1)
             curses.init_pair(2, curses.COLOR_CYAN, -1)
+            curses.init_pair(3, LIGHT_ORANGE if curses.COLORS >= 256 else curses.COLOR_YELLOW, -1)
             styles["accent"] = curses.color_pair(1) | curses.A_BOLD
             styles["quote"] = curses.color_pair(2)
+            styles["username"] = curses.color_pair(3) | curses.A_BOLD
+            styles["age"] = curses.color_pair(1)
         except curses.error:
             pass
     return styles
@@ -545,6 +565,9 @@ def _draw(screen, feed, styles):
             _put(screen, row, 2, "│ " * indent, curses.A_DIM)
             _put(screen, row, 2 + 2 * indent, text,
                  styles[style] | (curses.A_BOLD if index == selected and style == "body" else 0))
+            if style == "head" and feed.name != "notifications":
+                for start, end, kind in head_spans(text):
+                    _put(screen, row, 2 + 2 * indent + columns(text[:start]), text[start:end], styles[kind])
             row += 1
         # The gap to the next item keeps the guides of the threads both are in.
         if index + 1 < len(items) and row < rows - 2:
