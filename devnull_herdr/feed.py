@@ -1,11 +1,11 @@
 """The feed: /dev/null's Following, Latest and Trending logs, and your notifications, in a pane.
 
 Keys: 1 2 3 switch logs, 4 notifications · j/k or arrows move · g goes to the newest ·
-Enter opens or closes a post's replies · M writes a new post · R replies · O opens in the
-browser · s stars · Q closes.
+Enter opens or closes the replies of a post or reply · ← or h goes back out of a thread ·
+M writes a new post · R replies · O opens in the browser · s stars · Q closes.
 
 An opened post's replies show under it, oldest first, and j/k move through them like posts,
-so R, O and s work on a reply too.
+so R, O and s work on a reply too, and Enter on a reply opens its own replies under it.
 
 The feed refreshes by itself: new posts slot in at the top, marked until you've been on them,
 and the post you are reading stays where it is on screen. Opening notifications marks them
@@ -24,6 +24,8 @@ from .textbox import width
 
 TABS = [("following", "Following"), ("latest", "Latest"), ("trending", "Trending"), ("notifications", "Notifications")]
 REFRESH_EVERY = 30
+MAX_INDENT = 4  # replies deeper than this line up with the fourth level
+MIN_TEXT = 24  # the columns a reply keeps for its text, however deep it is: guides give way first
 MAX_BODY_ROWS = 8
 VERBS = {
     "replied": "replied to you", "mentioned": "mentioned you", "quoted": "quoted you", "starred": "starred",
@@ -162,13 +164,19 @@ class Feed:
         return TABS[self.tab][0]
 
     def rows(self):
-        """What the tab lists, in order, as (item, post) pairs: each post, and after an opened
-        post its replies, with `post` the post a reply is under, or None."""
-        threads = self.threads[self.name]
-        rows = []
+        """What the tab lists, in order, as (item, parent) pairs: each post, and after an opened
+        post or reply its replies, with `parent` what a reply answers, or None for a post."""
+        threads, rows = self.threads[self.name], []
+
+        def add(item, parent, opened):
+            rows.append((item, parent))
+            key = item.get("id")
+            if key in threads and key not in opened:  # `opened` keeps a loop of replies finite
+                for reply in threads[key]:
+                    add(reply, item, opened | {key})
+
         for item in self.items[self.name]:
-            rows.append((item, None))
-            rows.extend((reply, item) for reply in threads.get(item.get("id"), ()))
+            add(item, None, frozenset())
         return rows
 
     def current(self):
@@ -207,22 +215,42 @@ class Feed:
             self.load(more=True)
 
     def toggle_thread(self):
-        """Opens the selected post's replies under it, or closes them. On a reply, closes the
-        thread it is in and goes back to its post."""
+        """Opens the replies of the selected post or reply under it, or closes them, with
+        everything opened inside them."""
         name = self.name
         rows = self.rows()
         if name == "notifications" or not rows:
             return
-        item, post = rows[min(self.selected[name], len(rows) - 1)]
-        post = post or item
-        if not post.get("id"):
+        item, _ = rows[min(self.selected[name], len(rows) - 1)]
+        if not item.get("id"):
             return
-        threads = self.threads[name]
-        if post["id"] in threads:
-            del threads[post["id"]]
-            self.selected[name] = next(index for index, (row, _) in enumerate(self.rows()) if row is post)
+        if item["id"] in self.threads[name]:
+            self._close(item["id"])
+            self.selected[name] = self._index(item, self.selected[name])
         else:
-            threads[post["id"]] = self._replies(post)
+            self.threads[name][item["id"]] = self._replies(item)
+
+    def leave_thread(self):
+        """Closes the thread the selected reply is in and goes back to what it answers. On a
+        post, closes the post's own replies."""
+        name = self.name
+        rows = self.rows()
+        if name == "notifications" or not rows:
+            return
+        item, parent = rows[min(self.selected[name], len(rows) - 1)]
+        if parent is None:
+            self._close(item.get("id"))
+            return
+        self._close(parent.get("id"))
+        self.selected[name] = self._index(parent, 0)
+
+    def _index(self, item, otherwise):
+        """Where `item` itself is listed, or `otherwise` when it no longer is."""
+        return next((index for index, (row, _) in enumerate(self.rows()) if row is item), otherwise)
+
+    def _close(self, key):
+        for reply in self.threads[self.name].pop(key, None) or ():
+            self._close(reply.get("id"))
 
     def _replies(self, post):
         answer = self.client.replies(post["id"])
@@ -231,13 +259,22 @@ class Feed:
         (self.more.add if meta.get("next_cursor") else self.more.discard)(post["id"])
         return sorted(replies, key=lambda reply: str(reply.get("created_at") or ""))
 
-    def _place(self, name, key):
-        """The row index of `key`, an (item id, post id) pair: a reply that is gone falls back to
-        its post, and anything else to the top."""
-        rows = [(item.get("id"), post and post.get("id")) for item, post in self.rows()]
-        for wanted in (key, key and key[1] and (key[1], None)):
-            if wanted in rows:
-                return rows.index(wanted)
+    def chains(self):
+        """For each row, the ids from it up to its post: (reply id, ..., post id)."""
+        chains, by_item = [], {}
+        for item, parent in self.rows():
+            chain = (item.get("id"),) + (by_item.get(id(parent), ()) if parent is not None else ())
+            by_item[id(item)] = chain
+            chains.append(chain)
+        return chains
+
+    def _place(self, chain):
+        """The row index of `chain`: a reply that is gone falls back to the nearest of what it
+        answered that is still listed, and anything else to the top."""
+        chains = self.chains()
+        for start in range(len(chain or ())):
+            if chain[start:] in chains:
+                return chains.index(chain[start:])
         return 0
 
     def refresh(self):
@@ -245,8 +282,9 @@ class Feed:
 
         New posts go on top, and the selection and the screen move down with them, so the post
         you are on stays put. Counts of posts already shown are updated, and an opened post whose
-        reply count changed gets its replies again. Trending is ranked and so reorders: it
-        refreshes only while you are at its top.
+        reply count changed gets its replies again. A count is of direct replies only, so replies
+        opened inside a thread get theirs again at every refresh. Trending is ranked and so
+        reorders: it refreshes only while you are at its top.
         """
         self.refreshed = time.monotonic()
         name = self.name
@@ -256,7 +294,9 @@ class Feed:
             if self.selected[name] == 0:
                 threads = self.threads[name]
                 self.load()
-                ids = {item.get("id") for item in self.items[name]}
+                # Threads of posts still listed stay open, with the replies opened inside them.
+                self.threads[name] = threads
+                ids = {item.get("id") for item, _ in self.rows()}
                 self.threads[name] = {key: replies for key, replies in threads.items() if key in ids}
             return
         answer = self.client.log(name)
@@ -265,10 +305,13 @@ class Feed:
         new = [item for item in latest if item["id"] not in shown]
         threads = self.threads[name]
         # Replies first: if fetching them fails, nothing has changed and the next refresh tries again.
-        grown = {item["id"]: self._replies(item) for item in latest if item["id"] in threads
+        grown = {item["id"]: self._replies(item) for item in latest if item["id"] in threads and item["id"] in shown
                  and number(item.get("replies_count")) != number(shown[item["id"]].get("replies_count"))}
         rows = self.rows()
-        keys = [(item.get("id"), post and post.get("id")) for item, post in rows]
+        for item, parent in rows:
+            if parent is not None and item.get("id") in threads and item.get("id") not in grown:
+                grown[item["id"]] = self._replies(item)
+        keys = self.chains()
         for item in latest:
             if item["id"] in shown:
                 shown[item["id"]].update(item)
@@ -290,12 +333,12 @@ class Feed:
         self.fresh.update(item["id"] for item in new)
         if at_top:
             return
-        self.selected[name] = self._place(name, selected)
-        self.top[name] = min(self._place(name, top), self.selected[name])
+        self.selected[name] = self._place(selected)
+        self.top[name] = min(self._place(top), self.selected[name])
 
     def new_above(self):
         """How many posts that came in by themselves are above the screen, so out of sight."""
-        return sum(1 for item, post in self.rows()[: self.top[self.name]] if post is None and item.get("id") in self.fresh)
+        return sum(1 for item, parent in self.rows()[: self.top[self.name]] if parent is None and item.get("id") in self.fresh)
 
     def toggle_star(self):
         commit = self.current()
@@ -423,6 +466,8 @@ def _loop(screen, feed):
                 feed.note = start_reply(target) or ""
         elif key in ("\n", "\r", curses.KEY_ENTER):
             _safely(feed, feed.toggle_thread)
+        elif key in ("h", curses.KEY_LEFT):
+            _safely(feed, feed.leave_thread)
         elif key == "s":
             _safely(feed, feed.toggle_star)
         elif key == "O":
@@ -478,7 +523,8 @@ def _draw(screen, feed, styles):
         return
     width = max(cols - 4, 10)
     items = feed.rows()
-    blocks = [thread_lines(feed, item, post, width) for item, post in items]
+    indents = [min(depth, MAX_INDENT, max((width - MIN_TEXT) // 2, 0)) for depth in depth_of(items)]
+    blocks = [thread_lines(feed, item, parent, width - 2 * indent) for (item, parent), indent in zip(items, indents)]
     selected = feed.selected[feed.name]
     above = feed.new_above()
     if above:
@@ -490,43 +536,53 @@ def _draw(screen, feed, styles):
     for index in range(start, len(blocks)):
         if row >= rows - 2:
             break
-        item, post = items[index]
+        item, indent = items[index][0], indents[index]
         for text, style in blocks[index]:
             if row >= rows - 2:
                 break
             marker = "▌" if index == selected else ("●" if item.get("id") in feed.fresh else " ")
             _put(screen, row, 0, marker, styles["accent"])
-            if post:
-                _put(screen, row, 2, "│", curses.A_DIM)
-            _put(screen, row, 4 if post else 2, text,
+            _put(screen, row, 2, "│ " * indent, curses.A_DIM)
+            _put(screen, row, 2 + 2 * indent, text,
                  styles[style] | (curses.A_BOLD if index == selected and style == "body" else 0))
             row += 1
-        if post and index + 1 < len(items) and items[index + 1][1] is post and row < rows - 2:
-            _put(screen, row, 2, "│", curses.A_DIM)
+        # The gap to the next item keeps the guides of the threads both are in.
+        if index + 1 < len(items) and row < rows - 2:
+            _put(screen, row, 2, "│ " * min(indent, indents[index + 1]), curses.A_DIM)
         row += 1
     if not items:
         empty = "Nothing here yet." if feed.name in feed.loaded else "Loading…"
         _put(screen, top, 2, empty, curses.A_DIM)
-    keys = "1-4 tabs · j/k move · ⏎ replies · M post · R reply · O open · s star · Q close"
+    keys = "1-4 tabs · j/k · ⏎/← replies · M post · R reply · O open · s star · Q close"
     if feed.name == "notifications":
         keys = "1-4 tabs · j/k move · M new post · R reply · O open · Q close"
     _footer(screen, feed, rows, cols, keys)
     screen.refresh()
 
 
-def thread_lines(feed, item, post, cols):
-    """The rows of one item in the feed: a post, a notification, or a reply under its post."""
+def depth_of(rows):
+    """How deep in a thread each of `rows` is: 0 for a post, 1 for its replies, and so on."""
+    depths, by_item = [], {}
+    for item, parent in rows:
+        depth = by_item.get(id(parent), -1) + 1 if parent is not None else 0
+        by_item[id(item)] = depth
+        depths.append(depth)
+    return depths
+
+
+def thread_lines(feed, item, parent, cols):
+    """The rows of one item in the feed: a post, a notification, or a reply under what it answers.
+    `cols` is the room left beside the thread's guides."""
     if feed.name == "notifications":
         return notification_lines(item, cols)
-    if post:
-        lines = post_lines(item, cols - 2, in_thread=True)
-        replies = feed.threads[feed.name].get(post.get("id")) or []
-        if post.get("id") in feed.more and replies and replies[-1] is item:
-            lines.append(("… more replies: O on the post opens them all", "dim"))
-        return lines
-    lines = post_lines(item, cols)
-    if feed.threads[feed.name].get(item.get("id")) == []:
+    threads = feed.threads[feed.name]
+    lines = post_lines(item, cols, in_thread=parent is not None)
+    if threads.get(item.get("id")) == []:
         lines.append(("No replies yet · R replies", "dim"))
+    if parent is not None:
+        replies = threads.get(parent.get("id")) or []
+        if parent.get("id") in feed.more and replies and replies[-1] is item:
+            lines.append(("… more replies: O on the one they answer opens them all", "dim"))
     return lines
 
 

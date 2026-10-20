@@ -36,9 +36,12 @@ class FakeClient:
         return {"data": {"starred": on, "stars_count": 2 if on else 1}}
 
     def replies(self, commit_id, cursor=None):
-        """Two replies, newest first, to every post but the first; a next page for the second."""
+        """Two replies, newest first, to every post but the first; a next page for the second.
+        Reply 80 has a reply of its own, 85; the other replies have none."""
         self.calls.append(("replies", commit_id, cursor))
-        if commit_id == commit(0)["id"]:
+        if commit_id == commit(80)["id"]:
+            return {"data": [reply(85, commit_id, "2026-10-19T22:00:00Z")], "meta": {}}
+        if commit_id in (commit(0)["id"], commit(81)["id"], commit(85)["id"]):
             return {"data": [], "meta": {"next_cursor": None}}
         return {"data": [reply(81, commit_id, "2026-10-19T21:00:00Z"), reply(80, commit_id, "2026-10-19T20:00:00Z")],
                 "meta": {"next_cursor": "more" if commit_id == commit(2)["id"] else None}}
@@ -120,13 +123,67 @@ class ThreadTest(Isolated):
         self.feed.move(2)
         self.assertEqual(self.feed.current()["body"], "Post 2")
 
-    def test_enter_on_a_reply_closes_the_thread_and_goes_back_to_its_post(self):
+    def test_left_on_a_reply_closes_the_thread_and_goes_back_to_its_post(self):
+        self.feed.move(1)
+        self.feed.toggle_thread()
+        self.feed.move(2)
+        self.feed.leave_thread()
+        self.assertEqual(self.bodies(), ["Post 0", "Post 1", "Post 2", "Post 3", "Post 4"])
+        self.assertEqual(self.feed.current()["body"], "Post 1")
+
+    def test_left_on_a_post_closes_its_replies(self):
+        self.feed.move(1)
+        self.feed.toggle_thread()
+        self.feed.leave_thread()
+        self.assertEqual(self.bodies(), ["Post 0", "Post 1", "Post 2", "Post 3", "Post 4"])
+        self.assertEqual(self.feed.current()["body"], "Post 1")
+
+    def open_reply_80(self):
+        self.feed.move(1)
+        self.feed.toggle_thread()
+        self.feed.move(1)
+        self.feed.toggle_thread()
+
+    def test_enter_on_a_reply_opens_its_replies_under_it(self):
+        self.open_reply_80()
+        self.assertEqual(self.bodies(), ["Post 0", "Post 1", "Reply 80", "Reply 85", "Reply 81"])
+        self.assertEqual(feed.depth_of(self.feed.rows())[:6], [0, 0, 1, 2, 1, 0])
+        self.feed.move(1)
+        self.assertEqual(self.feed.target()["body"], "Reply 85")
+
+    def test_left_goes_back_out_one_level_at_a_time(self):
+        self.open_reply_80()
+        self.feed.move(1)
+        self.feed.leave_thread()
+        self.assertEqual(self.feed.current()["body"], "Reply 80")
+        self.assertEqual(self.bodies(), ["Post 0", "Post 1", "Reply 80", "Reply 81", "Post 2"])
+        self.feed.leave_thread()
+        self.assertEqual(self.feed.current()["body"], "Post 1")
+        self.assertEqual(self.bodies(), ["Post 0", "Post 1", "Post 2", "Post 3", "Post 4"])
+
+    def test_closing_a_thread_closes_what_was_opened_inside_it(self):
+        self.open_reply_80()
+        self.feed.move(-1)
+        self.feed.toggle_thread()
+        self.assertEqual(self.feed.threads["following"], {})
+        self.feed.toggle_thread()
+        self.assertEqual(self.bodies(), ["Post 0", "Post 1", "Reply 80", "Reply 81", "Post 2"])
+
+    def test_left_survives_a_loop_in_the_replies(self):
+        self.feed.move(1)
+        self.feed.toggle_thread()
+        self.feed.threads["following"][commit(1)["id"]].append(commit(1))  # a loop in the data
+        self.feed.move(3)
+        self.feed.leave_thread()
+        self.assertEqual(self.feed.current()["body"], "Post 1")
+
+    def test_a_reply_without_replies_says_so(self):
         self.feed.move(1)
         self.feed.toggle_thread()
         self.feed.move(2)
         self.feed.toggle_thread()
-        self.assertEqual(self.bodies(), ["Post 0", "Post 1", "Post 2", "Post 3", "Post 4"])
-        self.assertEqual(self.feed.current()["body"], "Post 1")
+        item, parent = self.feed.rows()[3]
+        self.assertIn("No replies yet · R replies", [text for text, _ in feed.thread_lines(self.feed, item, parent, 40)])
 
     def test_a_post_without_replies_says_so(self):
         self.feed.toggle_thread()
@@ -137,7 +194,7 @@ class ThreadTest(Isolated):
         self.feed.toggle_thread()
         last, post = self.feed.rows()[4]
         lines = [text for text, _ in feed.thread_lines(self.feed, last, post, 40)]
-        self.assertIn("… more replies: O on the post opens them all", lines)
+        self.assertIn("… more replies: O on the one they answer opens them all", lines)
         self.assertNotIn("↳ a reply", lines)
 
     def test_threads_stay_in_their_tab_and_reloading_closes_them(self):
@@ -157,6 +214,13 @@ class ThreadTest(Isolated):
         self.feed.selected["trending"] = 0
         self.feed.refresh()
         self.assertEqual(self.bodies()[:4], ["Post 0", "Post 1", "Reply 80", "Reply 81"])
+
+    def test_nested_threads_survive_trendings_refresh(self):
+        self.feed.switch(2)
+        self.open_reply_80()
+        self.feed.selected["trending"] = 0
+        self.feed.refresh()
+        self.assertEqual(self.bodies(), ["Post 0", "Post 1", "Reply 80", "Reply 85", "Reply 81"])
 
     def test_notifications_have_no_threads(self):
         self.feed.switch(3)
@@ -244,6 +308,30 @@ class RefreshTest(Isolated):
         self.assertEqual([call[0] for call in self.client.calls].count("replies"), 2)
         self.assertEqual((self.feed.current()["id"], self.feed.current()["parent_id"]), (reading["id"], reading["parent_id"]))
         self.assertEqual(self.feed.selected["following"], 8)
+
+    def test_replies_opened_inside_a_thread_get_theirs_at_every_refresh(self):
+        # A count is of direct replies only: a reply to a reply doesn't change the post's.
+        self.feed.move(5)
+        self.feed.toggle_thread()
+        self.feed.move(1)
+        self.feed.toggle_thread()
+        self.feed.move(1)
+        self.feed.refresh()
+        replies = [call[1] for call in self.client.calls if call[0] == "replies"]
+        self.assertEqual(replies, [commit(14)["id"], commit(80)["id"], commit(80)["id"]])
+        self.assertEqual(self.feed.current()["body"], "Reply 85")
+
+    def test_a_reply_that_is_gone_falls_back_to_the_nearest_still_listed(self):
+        self.feed.move(5)
+        self.feed.toggle_thread()
+        self.feed.move(1)
+        self.feed.toggle_thread()
+        self.feed.move(1)  # on reply 85, under reply 80, under post 14
+        self.feed.items["following"][5]["replies_count"] = 1
+        with mock.patch.object(self.client, "replies", return_value={"data": []}):
+            self.client.post(1)
+            self.feed.refresh()
+        self.assertEqual(self.feed.current()["id"], commit(14)["id"])
 
     def test_a_reply_that_is_gone_leaves_you_on_its_post(self):
         self.feed.move(5)
