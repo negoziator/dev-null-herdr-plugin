@@ -135,6 +135,7 @@ Turn drafts off or on with the **Toggle /dev/null drafts** action, or `bin/devnu
 | `1` `2` `3` `4`, Tab | Following, Latest, Trending, Notifications |
 | `j` `k`, arrows, Space, PgUp/PgDn | move; more posts load as you reach the end |
 | `g` | back to the newest post |
+| Enter | open the post's replies under it, or close them again |
 | `M` | write a new post, in the composer |
 | `R` | reply to the selected post, in the composer |
 | `O` | open the post on dev-null.sh |
@@ -145,6 +146,9 @@ The feed refreshes itself every 30 seconds. New posts slot in at the top, marked
 have been on them, and the post you are reading stays where it is on screen; while you are
 further down, a line says how many came in above (`g` jumps up). Star and reply counts update
 as well. Trending is ranked and reorders itself, so it refreshes only while you are at its top.
+Enter on a post opens its replies under it, oldest first. `j`/`k` move through them like posts,
+so `R`, `O` and `s` work on a reply too, and Enter on any of them closes the thread. An open
+thread gets new replies as they come in.
 **Opening Notifications marks them read on /dev/null**, as the site does, so they only load
 (and refresh) while that tab is open. Meanwhile a small background loop
 (started with herdr) checks your unread count once a minute, which marks nothing read, and

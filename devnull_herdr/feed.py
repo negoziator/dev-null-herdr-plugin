@@ -1,7 +1,11 @@
 """The feed: /dev/null's Following, Latest and Trending logs, and your notifications, in a pane.
 
 Keys: 1 2 3 switch logs, 4 notifications · j/k or arrows move · g goes to the newest ·
-M writes a new post · R replies · O opens in the browser · s stars · Q closes.
+Enter opens or closes a post's replies · M writes a new post · R replies · O opens in the
+browser · s stars · Q closes.
+
+An opened post's replies show under it, oldest first, and j/k move through them like posts,
+so R, O and s work on a reply too.
 
 The feed refreshes by itself: new posts slot in at the top, marked until you've been on them,
 and the post you are reading stays where it is on screen. Opening notifications marks them
@@ -88,15 +92,16 @@ def _author(commit):
     return clean(str(author.get("name") or "")), clean(str(author.get("username") or "?"))
 
 
-def post_lines(commit, cols):
-    """A post as (text, style) rows: style is "head", "body", "dim" or "quote"."""
+def post_lines(commit, cols, in_thread=False):
+    """A post as (text, style) rows: style is "head", "body", "dim" or "quote". `in_thread` is
+    for a reply shown under its post, which needs no "a reply" line."""
     name, username = _author(commit)
     head = f"{name} @{username} · {age(commit.get('created_at'))}" if name and name != username else \
         f"@{username} · {age(commit.get('created_at'))}"
     short = str(commit.get("short_hash") or "")
     head = fit(head, max(cols - len(short) - 1, 1))
     lines = [(head + " " * max(cols - len(short) - columns(head), 1) + short, "head")]
-    if commit.get("parent_id"):
+    if commit.get("parent_id") and not in_thread:
         lines.append(("↳ a reply", "dim"))
     if commit.get("deleted_at"):
         lines.append(("(reverted)", "dim"))
@@ -145,7 +150,9 @@ class Feed:
         self.cursors = {name: None for name, _ in TABS}
         self.loaded = set()
         self.selected = {name: 0 for name, _ in TABS}
-        self.top = {name: 0 for name, _ in TABS}  # the first post on screen
+        self.top = {name: 0 for name, _ in TABS}  # the first row on screen
+        self.threads = {name: {} for name, _ in TABS}  # post id -> its replies, for opened posts
+        self.more = set()  # ids of opened posts with more replies than were loaded
         self.fresh = set()  # ids of posts that came in by themselves, not seen yet
         self.note = ""
         self.refreshed = time.monotonic()
@@ -154,9 +161,19 @@ class Feed:
     def name(self):
         return TABS[self.tab][0]
 
+    def rows(self):
+        """What the tab lists, in order, as (item, post) pairs: each post, and after an opened
+        post its replies, with `post` the post a reply is under, or None."""
+        threads = self.threads[self.name]
+        rows = []
+        for item in self.items[self.name]:
+            rows.append((item, None))
+            rows.extend((reply, item) for reply in threads.get(item.get("id"), ()))
+        return rows
+
     def current(self):
-        items = self.items[self.name]
-        return items[self.selected[self.name]] if items else None
+        rows = self.rows()
+        return rows[min(self.selected[self.name], len(rows) - 1)][0] if rows else None
 
     def load(self, more=False):
         name = self.name
@@ -170,6 +187,7 @@ class Feed:
         self.cursors[name] = meta.get("next_cursor")
         if not more:
             self.selected[name] = self.top[name] = 0
+            self.threads[name] = {}
         self.loaded.add(name)
         self.refreshed = time.monotonic()
 
@@ -179,21 +197,56 @@ class Feed:
             self.load()
 
     def move(self, step):
-        items = self.items[self.name]
-        if not items:
+        rows = self.rows()
+        if not rows:
             return
-        index = min(max(self.selected[self.name] + step, 0), len(items) - 1)
+        index = min(max(self.selected[self.name] + step, 0), len(rows) - 1)
         self.selected[self.name] = index
-        self.fresh.discard(items[index].get("id"))
-        if index >= len(items) - 3 and self.cursors[self.name]:
+        self.fresh.discard(rows[index][0].get("id"))
+        if index >= len(rows) - 3 and self.cursors[self.name]:
             self.load(more=True)
+
+    def toggle_thread(self):
+        """Opens the selected post's replies under it, or closes them. On a reply, closes the
+        thread it is in and goes back to its post."""
+        name = self.name
+        rows = self.rows()
+        if name == "notifications" or not rows:
+            return
+        item, post = rows[min(self.selected[name], len(rows) - 1)]
+        post = post or item
+        if not post.get("id"):
+            return
+        threads = self.threads[name]
+        if post["id"] in threads:
+            del threads[post["id"]]
+            self.selected[name] = next(index for index, (row, _) in enumerate(self.rows()) if row is post)
+        else:
+            threads[post["id"]] = self._replies(post)
+
+    def _replies(self, post):
+        answer = self.client.replies(post["id"])
+        replies = [item for item in answer.get("data") or [] if isinstance(item, dict)]
+        meta = answer.get("meta") if isinstance(answer.get("meta"), dict) else {}
+        (self.more.add if meta.get("next_cursor") else self.more.discard)(post["id"])
+        return sorted(replies, key=lambda reply: str(reply.get("created_at") or ""))
+
+    def _place(self, name, key):
+        """The row index of `key`, an (item id, post id) pair: a reply that is gone falls back to
+        its post, and anything else to the top."""
+        rows = [(item.get("id"), post and post.get("id")) for item, post in self.rows()]
+        for wanted in (key, key and key[1] and (key[1], None)):
+            if wanted in rows:
+                return rows.index(wanted)
+        return 0
 
     def refresh(self):
         """Brings the tab up to date without moving what you are reading.
 
         New posts go on top, and the selection and the screen move down with them, so the post
-        you are on stays put. Counts of posts already shown are updated. Trending is ranked and
-        so reorders: it refreshes only while you are at its top.
+        you are on stays put. Counts of posts already shown are updated, and an opened post whose
+        reply count changed gets its replies again. Trending is ranked and so reorders: it
+        refreshes only while you are at its top.
         """
         self.refreshed = time.monotonic()
         name = self.name
@@ -201,32 +254,48 @@ class Feed:
             return
         if name in ("trending", "notifications"):
             if self.selected[name] == 0:
+                threads = self.threads[name]
                 self.load()
+                ids = {item.get("id") for item in self.items[name]}
+                self.threads[name] = {key: replies for key, replies in threads.items() if key in ids}
             return
         answer = self.client.log(name)
         latest = [item for item in answer.get("data") or [] if isinstance(item, dict) and item.get("id")]
         shown = {item.get("id"): item for item in self.items[name]}
         new = [item for item in latest if item["id"] not in shown]
+        threads = self.threads[name]
+        # Replies first: if fetching them fails, nothing has changed and the next refresh tries again.
+        grown = {item["id"]: self._replies(item) for item in latest if item["id"] in threads
+                 and number(item.get("replies_count")) != number(shown[item["id"]].get("replies_count"))}
+        rows = self.rows()
+        keys = [(item.get("id"), post and post.get("id")) for item, post in rows]
         for item in latest:
             if item["id"] in shown:
                 shown[item["id"]].update(item)
-        if not new:
+        if not new and not grown:
             return
         if len(new) == len(latest):
             # More new posts than a page: start from the top again.
             meta = answer.get("meta") if isinstance(answer.get("meta"), dict) else {}
             self.items[name], self.cursors[name] = latest, meta.get("next_cursor")
             self.selected[name] = self.top[name] = 0
-        else:
-            self.items[name] = new + self.items[name]
-            if self.selected[name] or self.top[name]:
-                self.selected[name] += len(new)
-                self.top[name] += len(new)
+            self.threads[name] = {}
+            self.fresh.update(item["id"] for item in new)
+            return
+        at_top = not (self.selected[name] or self.top[name])
+        selected = keys[min(self.selected[name], len(keys) - 1)] if keys else None
+        top = keys[min(self.top[name], len(keys) - 1)] if keys else None
+        threads.update(grown)
+        self.items[name] = new + self.items[name]
         self.fresh.update(item["id"] for item in new)
+        if at_top:
+            return
+        self.selected[name] = self._place(name, selected)
+        self.top[name] = min(self._place(name, top), self.selected[name])
 
     def new_above(self):
         """How many posts that came in by themselves are above the screen, so out of sight."""
-        return sum(1 for item in self.items[self.name][: self.top[self.name]] if item.get("id") in self.fresh)
+        return sum(1 for item, post in self.rows()[: self.top[self.name]] if post is None and item.get("id") in self.fresh)
 
     def toggle_star(self):
         commit = self.current()
@@ -352,6 +421,8 @@ def _loop(screen, feed):
             target = feed.target()
             if target and target.get("id"):
                 feed.note = start_reply(target) or ""
+        elif key in ("\n", "\r", curses.KEY_ENTER):
+            _safely(feed, feed.toggle_thread)
         elif key == "s":
             _safely(feed, feed.toggle_star)
         elif key == "O":
@@ -406,9 +477,8 @@ def _draw(screen, feed, styles):
         screen.refresh()
         return
     width = max(cols - 4, 10)
-    items = feed.items[feed.name]
-    render = notification_lines if feed.name == "notifications" else post_lines
-    blocks = [render(item, width) for item in items]
+    items = feed.rows()
+    blocks = [thread_lines(feed, item, post, width) for item, post in items]
     selected = feed.selected[feed.name]
     above = feed.new_above()
     if above:
@@ -420,22 +490,44 @@ def _draw(screen, feed, styles):
     for index in range(start, len(blocks)):
         if row >= rows - 2:
             break
+        item, post = items[index]
         for text, style in blocks[index]:
             if row >= rows - 2:
                 break
-            marker = "▌" if index == selected else ("●" if items[index].get("id") in feed.fresh else " ")
+            marker = "▌" if index == selected else ("●" if item.get("id") in feed.fresh else " ")
             _put(screen, row, 0, marker, styles["accent"])
-            _put(screen, row, 2, text, styles[style] | (curses.A_BOLD if index == selected and style == "body" else 0))
+            if post:
+                _put(screen, row, 2, "│", curses.A_DIM)
+            _put(screen, row, 4 if post else 2, text,
+                 styles[style] | (curses.A_BOLD if index == selected and style == "body" else 0))
             row += 1
+        if post and index + 1 < len(items) and items[index + 1][1] is post and row < rows - 2:
+            _put(screen, row, 2, "│", curses.A_DIM)
         row += 1
     if not items:
         empty = "Nothing here yet." if feed.name in feed.loaded else "Loading…"
         _put(screen, top, 2, empty, curses.A_DIM)
-    keys = "1-4 tabs · j/k move · M new post · R reply · O open · s star · Q close"
+    keys = "1-4 tabs · j/k move · ⏎ replies · M post · R reply · O open · s star · Q close"
     if feed.name == "notifications":
         keys = "1-4 tabs · j/k move · M new post · R reply · O open · Q close"
     _footer(screen, feed, rows, cols, keys)
     screen.refresh()
+
+
+def thread_lines(feed, item, post, cols):
+    """The rows of one item in the feed: a post, a notification, or a reply under its post."""
+    if feed.name == "notifications":
+        return notification_lines(item, cols)
+    if post:
+        lines = post_lines(item, cols - 2, in_thread=True)
+        replies = feed.threads[feed.name].get(post.get("id")) or []
+        if post.get("id") in feed.more and replies and replies[-1] is item:
+            lines.append(("… more replies: O on the post opens them all", "dim"))
+        return lines
+    lines = post_lines(item, cols)
+    if feed.threads[feed.name].get(item.get("id")) == []:
+        lines.append(("No replies yet · R replies", "dim"))
+    return lines
 
 
 def scroll(blocks, selected, top, room):

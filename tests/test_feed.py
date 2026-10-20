@@ -35,6 +35,18 @@ class FakeClient:
         self.calls.append(("star", commit_id, on))
         return {"data": {"starred": on, "stars_count": 2 if on else 1}}
 
+    def replies(self, commit_id, cursor=None):
+        """Two replies, newest first, to every post but the first; a next page for the second."""
+        self.calls.append(("replies", commit_id, cursor))
+        if commit_id == commit(0)["id"]:
+            return {"data": [], "meta": {"next_cursor": None}}
+        return {"data": [reply(81, commit_id, "2026-10-19T21:00:00Z"), reply(80, commit_id, "2026-10-19T20:00:00Z")],
+                "meta": {"next_cursor": "more" if commit_id == commit(2)["id"] else None}}
+
+
+def reply(number, parent_id, created_at):
+    return commit(number, parent_id=parent_id, created_at=created_at, body=f"Reply {number}")
+
 
 class FeedTest(Isolated):
     def setUp(self):
@@ -80,6 +92,76 @@ class FeedTest(Isolated):
         self.assertTrue(self.feed.current()["starred"])
         self.feed.toggle_star()
         self.assertEqual(self.client.calls[-1][2], False)
+
+
+class ThreadTest(Isolated):
+    def setUp(self):
+        super().setUp()
+        self.client = FakeClient()
+        self.feed = feed.Feed(self.client)
+        self.feed.load()
+
+    def bodies(self):
+        return [item["body"] for item, _ in self.feed.rows()][:5]
+
+    def test_enter_opens_the_replies_under_the_post_oldest_first(self):
+        self.feed.move(1)
+        self.feed.toggle_thread()
+        self.assertEqual(self.bodies(), ["Post 0", "Post 1", "Reply 80", "Reply 81", "Post 2"])
+        self.assertEqual(self.feed.current()["body"], "Post 1")
+
+    def test_you_move_through_the_replies_and_act_on_them(self):
+        self.feed.move(1)
+        self.feed.toggle_thread()
+        self.feed.move(1)
+        self.assertEqual(self.feed.target()["body"], "Reply 80")
+        self.feed.toggle_star()
+        self.assertEqual(self.client.calls[-1][:2], ("star", commit(80)["id"]))
+        self.feed.move(2)
+        self.assertEqual(self.feed.current()["body"], "Post 2")
+
+    def test_enter_on_a_reply_closes_the_thread_and_goes_back_to_its_post(self):
+        self.feed.move(1)
+        self.feed.toggle_thread()
+        self.feed.move(2)
+        self.feed.toggle_thread()
+        self.assertEqual(self.bodies(), ["Post 0", "Post 1", "Post 2", "Post 3", "Post 4"])
+        self.assertEqual(self.feed.current()["body"], "Post 1")
+
+    def test_a_post_without_replies_says_so(self):
+        self.feed.toggle_thread()
+        self.assertIn("No replies yet · R replies", [text for text, _ in feed.thread_lines(self.feed, commit(0), None, 40)])
+
+    def test_more_replies_than_a_page_point_to_the_site(self):
+        self.feed.move(2)
+        self.feed.toggle_thread()
+        last, post = self.feed.rows()[4]
+        lines = [text for text, _ in feed.thread_lines(self.feed, last, post, 40)]
+        self.assertIn("… more replies: O on the post opens them all", lines)
+        self.assertNotIn("↳ a reply", lines)
+
+    def test_threads_stay_in_their_tab_and_reloading_closes_them(self):
+        self.feed.move(1)
+        self.feed.toggle_thread()
+        self.feed.switch(1)
+        self.assertEqual(len(self.feed.rows()), 20)
+        self.feed.switch(0)
+        self.assertEqual(len(self.feed.rows()), 22)
+        self.feed.load()
+        self.assertEqual(len(self.feed.rows()), 20)
+
+    def test_an_open_thread_survives_trendings_refresh(self):
+        self.feed.switch(2)
+        self.feed.move(1)
+        self.feed.toggle_thread()
+        self.feed.selected["trending"] = 0
+        self.feed.refresh()
+        self.assertEqual(self.bodies()[:4], ["Post 0", "Post 1", "Reply 80", "Reply 81"])
+
+    def test_notifications_have_no_threads(self):
+        self.feed.switch(3)
+        self.feed.toggle_thread()
+        self.assertNotIn("replies", [call[0] for call in self.client.calls])
 
 
 class LiveClient(FakeClient):
@@ -150,6 +232,43 @@ class RefreshTest(Isolated):
         self.assertEqual(len(self.ids()), 20)
         self.assertEqual(self.ids()[0], commit(44)["id"])
         self.assertEqual(self.feed.selected["following"], 0)
+
+    def test_an_opened_post_with_new_replies_gets_them_and_you_stay_put(self):
+        self.feed.move(5)
+        self.feed.toggle_thread()
+        self.feed.move(2)
+        reading = self.feed.current()
+        self.feed.items["following"][5]["replies_count"] = 1  # it had one reply when you opened it
+        self.client.post(1)
+        self.feed.refresh()
+        self.assertEqual([call[0] for call in self.client.calls].count("replies"), 2)
+        self.assertEqual((self.feed.current()["id"], self.feed.current()["parent_id"]), (reading["id"], reading["parent_id"]))
+        self.assertEqual(self.feed.selected["following"], 8)
+
+    def test_a_reply_that_is_gone_leaves_you_on_its_post(self):
+        self.feed.move(5)
+        self.feed.toggle_thread()
+        self.feed.move(2)
+        self.feed.items["following"][5]["replies_count"] = 1
+        with mock.patch.object(self.client, "replies", return_value={"data": []}):
+            self.client.post(1)
+            self.feed.refresh()
+        self.assertEqual(self.feed.current()["id"], commit(14)["id"])
+
+    def test_a_failed_reply_fetch_is_tried_again(self):
+        self.feed.toggle_thread()
+        self.feed.items["following"][0]["replies_count"] = 1
+        with mock.patch.object(self.client, "replies", side_effect=feed.api.ApiError(429, "x", "Slow down")):
+            with self.assertRaises(feed.api.ApiError):
+                self.feed.refresh()
+        self.assertEqual(self.feed.items["following"][0]["replies_count"], 1)
+
+    def test_new_above_counts_posts_not_replies(self):
+        self.feed.move(1)
+        self.feed.toggle_thread()
+        self.feed.top["following"] = self.feed.selected["following"] = 4  # the post after the thread
+        self.feed.fresh = {self.feed.items["following"][2]["id"]}  # on screen, not above it
+        self.assertEqual(self.feed.new_above(), 0)
 
     def test_seeing_a_post_clears_its_mark(self):
         self.feed.move(3)
